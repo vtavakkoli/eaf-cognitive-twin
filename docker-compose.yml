@@ -1,0 +1,7 @@
+services:
+  full-run:
+    build: .
+    image: eaf-simulator:latest
+    command: ["--output-dir", "outputs"]
+    volumes:
+      - ./outputs:/app/outputs
