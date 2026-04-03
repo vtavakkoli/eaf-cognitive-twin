@@ -1106,12 +1106,8 @@ def main() -> None:
     if args.seed is not None:
         config.random_seed = args.seed
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
-from eaf_twin.cli import main
+    run_full_simulation(config, args.output_dir)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 1 or sys.argv[1].startswith("-"):
-        sys.argv.insert(1, "run")
     main()
