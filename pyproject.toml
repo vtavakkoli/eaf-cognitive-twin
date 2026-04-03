@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eaf-twin"
+version = "0.1.0"
+description = "Research-grade EAF cognitive digital twin foundation"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy==2.1.3",
+  "pandas==2.2.3",
+  "matplotlib==3.9.2",
+  "scipy==1.14.1"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

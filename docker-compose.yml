@@ -1,7 +1,7 @@
 services:
   full-run:
     build: .
-    image: eaf-simulator:latest
-    command: ["--output-dir", "outputs"]
+    image: eaf-twin:latest
+    command: ["run", "--config", "configs/base_case.json", "--output-dir", "outputs"]
     volumes:
       - ./outputs:/app/outputs
