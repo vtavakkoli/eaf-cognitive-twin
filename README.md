@@ -42,3 +42,19 @@ Under `outputs/`:
 ## Notes
 - Numerical integration uses explicit Euler (default `dt=2 s`), with checks for nonphysical states.
 - Results are deterministic unless measurement noise is enabled.
+
+## Run unit tests
+```bash
+python -m unittest discover -s tests -v
+```
+
+## GitHub PR workflow check
+A GitHub Actions workflow is included at `.github/workflows/pr-test.yml`.
+It runs automatically on pull requests and executes:
+1. Dependency install
+2. Static compile checks
+3. Unit tests
+4. A short smoke simulation run with artifact upload
+
+> Note: The Docker image sets `ENTRYPOINT ["python", "eaf_simulator.py"]`, so the compose
+> `command` must pass only simulator arguments (for example `--output-dir outputs`).

@@ -2,6 +2,6 @@ services:
   full-run:
     build: .
     image: eaf-simulator:latest
-    command: ["python", "eaf_simulator.py", "--output-dir", "outputs"]
+    command: ["--output-dir", "outputs"]
     volumes:
       - ./outputs:/app/outputs
