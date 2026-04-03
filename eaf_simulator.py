@@ -28,10 +28,18 @@ Python 3.12+, numpy, pandas, matplotlib, scipy (optional for future extension).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import time
 from dataclasses import asdict, dataclass, field, replace
+
+# Defensive fallback for environments where symbol injection is altered.
+if "dataclass" not in globals():
+    dataclass = dataclasses.dataclass
+    field = dataclasses.field
+    asdict = dataclasses.asdict
+    replace = dataclasses.replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -1028,7 +1036,7 @@ def run_sensitivity(base: FurnaceConfig, out_dir: Path) -> Tuple[pd.DataFrame, P
     sens_df = pd.DataFrame(rows).sort_values("sensitivity_index", ascending=True)
 
     plt.figure(figsize=(8.5, 4.8))
-    plt.barh(sens_df["parameter"], sens_df["sensitivity_index"], color="tab:teal")
+    plt.barh(sens_df["parameter"], sens_df["sensitivity_index"], color="teal")
     plt.xlabel("|ΔTapTemp| + |ΔElec kWh/t|")
     plt.title("Sensitivity ranking (enhanced model)")
     plt.grid(True, alpha=0.3, axis="x")
