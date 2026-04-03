@@ -1,0 +1,110 @@
+{
+  "heat_name": "default_100t_heat",
+  "tap_target_steel_kg": 100000.0,
+  "initial_scrap_kg": 105000.0,
+  "initial_dri_kg": 0.0,
+  "initial_slag_kg": 2500.0,
+  "ambient_temp_c": 25.0,
+  "scrap_temp_c": 25.0,
+  "initial_steel_temp_c": 1550.0,
+  "initial_slag_temp_c": 1550.0,
+  "initial_offgas_temp_c": 400.0,
+  "tap_target_temp_c": 1645.0,
+  "cp_steel_j_kgk": 820.0,
+  "cp_slag_j_kgk": 1000.0,
+  "cp_scrap_j_kgk": 700.0,
+  "cp_dri_j_kgk": 680.0,
+  "cp_offgas_j_kgk": 1150.0,
+  "latent_heat_steel_j_kg": 272000.0,
+  "steel_melt_temp_c": 1535.0,
+  "area_effective_m2": 230.0,
+  "ua_wall_w_k": 45000.0,
+  "radiation_loss_factor": 0.18,
+  "eta_arc_bore_in": 0.7,
+  "eta_arc_melting": 0.82,
+  "eta_arc_refining": 0.75,
+  "eta_arc_superheat": 0.73,
+  "eta_burner": 0.62,
+  "oxygen_reaction_efficiency": 0.8,
+  "carbon_reaction_efficiency": 0.72,
+  "post_combustion_factor": 0.28,
+  "lhv_ng_j_nm3": 35800000.0,
+  "oxygen_heat_j_nm3": 5400000.0,
+  "carbon_heat_j_kg": 10500000.0,
+  "fe_oxidation_ratio_per_nm3_o2": 1.5,
+  "decarb_kg_per_nm3_o2": 0.18,
+  "flux_to_slag_factor": 0.98,
+  "slag_to_bath_heat_coeff_w_k": 14000.0,
+  "foamy_slag_loss_reduction": 0.2,
+  "dri_reduction_endotherm_j_kg": 125000.0,
+  "dri_fe_metallization": 0.92,
+  "max_offgas_temp_c": 2200.0,
+  "stage_windows": [
+    {
+      "start_min": 0,
+      "end_min": 8,
+      "power_mw": 45,
+      "oxygen_nm3_min": 35,
+      "ng_nm3_min": 22,
+      "carbon_kg_min": 10,
+      "flux_kg_min": 80
+    },
+    {
+      "start_min": 8,
+      "end_min": 32,
+      "power_mw": 78,
+      "oxygen_nm3_min": 70,
+      "ng_nm3_min": 16,
+      "carbon_kg_min": 20,
+      "flux_kg_min": 140
+    },
+    {
+      "start_min": 32,
+      "end_min": 50,
+      "power_mw": 62,
+      "oxygen_nm3_min": 60,
+      "ng_nm3_min": 9,
+      "carbon_kg_min": 15,
+      "flux_kg_min": 120
+    },
+    {
+      "start_min": 50,
+      "end_min": 60,
+      "power_mw": 50,
+      "oxygen_nm3_min": 40,
+      "ng_nm3_min": 4,
+      "carbon_kg_min": 6,
+      "flux_kg_min": 60
+    },
+    {
+      "start_min": 60,
+      "end_min": 65,
+      "power_mw": 20,
+      "oxygen_nm3_min": 10,
+      "ng_nm3_min": 2,
+      "carbon_kg_min": 0,
+      "flux_kg_min": 0
+    }
+  ],
+  "charge_events": [
+    {
+      "time_min": 0.0,
+      "scrap_kg": 60899.99999999999,
+      "dri_kg": 0.0
+    },
+    {
+      "time_min": 9.0,
+      "scrap_kg": 44100.00000000001,
+      "dri_kg": 0.0
+    }
+  ],
+  "heat_duration_min": 65.0,
+  "dt_s": 2.0,
+  "max_temp_c": 1850.0,
+  "min_temp_c": 20.0,
+  "measurement_noise_std": 0.0,
+  "random_seed": 42,
+  "tap_rate_kg_s": 1300.0,
+  "downtime_start_min": null,
+  "downtime_duration_min": 0.0
+}

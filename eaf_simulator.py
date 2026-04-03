@@ -1028,7 +1028,7 @@ def run_sensitivity(base: FurnaceConfig, out_dir: Path) -> Tuple[pd.DataFrame, P
     sens_df = pd.DataFrame(rows).sort_values("sensitivity_index", ascending=True)
 
     plt.figure(figsize=(8.5, 4.8))
-    plt.barh(sens_df["parameter"], sens_df["sensitivity_index"], color="tab:teal")
+    plt.barh(sens_df["parameter"], sens_df["sensitivity_index"], color="teal")
     plt.xlabel("|ΔTapTemp| + |ΔElec kWh/t|")
     plt.title("Sensitivity ranking (enhanced model)")
     plt.grid(True, alpha=0.3, axis="x")
