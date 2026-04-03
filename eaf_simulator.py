@@ -1,29 +1,5 @@
 #!/usr/bin/env python3
-"""
-EAF Heat Simulator (research-oriented baseline)
-==============================================
-
-Usage
------
-1) Local Python run:
-   python eaf_simulator.py --output-dir outputs --dt 2.0
-
-2) Docker Compose run:
-   docker compose up --build full-run
-
-What this script does
----------------------
-- Simulates a 100 t scrap-based EAF heat with three model fidelities:
-  Model A (empirical), Model B (first-principles lumped), Model C (enhanced hybrid).
-- Runs multiple scenarios (base + five variants).
-- Exports per-model time series CSV files.
-- Exports scenario comparison tables and summary JSON.
-- Creates PNG figures for key trajectories and a sensitivity bar chart.
-
-Dependencies
-------------
-Python 3.12+, numpy, pandas, matplotlib, scipy (optional for future extension).
-"""
+"""Backward-compatible wrapper to the new package CLI."""
 
 from __future__ import annotations
 
@@ -1130,11 +1106,12 @@ def main() -> None:
     if args.seed is not None:
         config.random_seed = args.seed
 
-    if config.dt_s > 5:
-        print("WARNING: large dt can reduce numerical fidelity; recommended 1-5 s.")
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-    run_full_simulation(config, args.output_dir)
+from eaf_twin.cli import main
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 1 or sys.argv[1].startswith("-"):
+        sys.argv.insert(1, "run")
     main()
