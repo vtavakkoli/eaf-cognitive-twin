@@ -16,5 +16,17 @@ class TestLegacyWrapper(unittest.TestCase):
             self.assertTrue((Path(td) / "summary_all_scenarios.csv").exists())
 
 
+class TestLegacyWrapper(unittest.TestCase):
+    """Compatibility smoke test for script entrypoint."""
+
+    def test_legacy_script_runs(self) -> None:
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as td:
+            cp = subprocess.run([sys.executable, "eaf_simulator.py", "--output-dir", td], capture_output=True, text=True, check=False)
+            self.assertEqual(cp.returncode, 0, msg=cp.stderr)
+            self.assertTrue((Path(td) / "summary_all_scenarios.csv").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
