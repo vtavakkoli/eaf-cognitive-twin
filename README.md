@@ -1,60 +1,42 @@
-# EAF Cognitive Twin Simulator
+# EAF Cognitive Digital Twin
 
-Research-oriented dynamic simulator for a typical **100 t scrap-based Electric Arc Furnace (EAF)** heat.
+Refactored research-grade foundation for an Electric Arc Furnace (EAF) cognitive digital twin with three fidelity levels:
+1. empirical
+2. first-principles
+3. enhanced hybrid
 
-## Features
-- Three model fidelities in one executable program:
-  - **Model A**: empirical reduced-order dynamic model
-  - **Model B**: first-principles lumped mass/energy dynamic model
-  - **Model C**: enhanced hybrid model (foamy slag, stage-dependent efficiencies, off-gas, optional correction/noise)
-- Multi-stage operation: charging, bore-in, main melting, refining, superheating, tapping.
-- Time-varying profiles for electric power, oxygen, natural gas, carbon injection, and flux.
-- Scenario suite (base + five required variants).
-- Sensitivity analysis for key parameters.
-- CSV, JSON, and PNG outputs for each run.
-
-## Run locally
+## Quick start (local)
 ```bash
-python eaf_simulator.py --output-dir outputs --dt 2.0
+pip install -r requirements.txt
+pip install -e .
+python -m eaf_twin.cli run --config configs/base_case.json --output-dir outputs
 ```
 
-Optional flags:
-- `--config path/to/config.json`
-- `--noise 2.0`
-- `--seed 123`
+Backward-compatible command:
+```bash
+python eaf_simulator.py --config configs/base_case.json --output-dir outputs
+```
 
-## Run via Docker Compose
+## Docker
 ```bash
 docker compose up --build full-run
 ```
 
-## Expected output files
-Under `outputs/`:
-- `timeseries_<scenario>_<model>.csv`
-- `summary_all_scenarios.csv`
-- `summary_all_scenarios.json`
-- `resolved_config.json`
-- `plot_<scenario>_<model>_*.png`
-- `plot_compare_models_<scenario>.png`
-- `sensitivity_table.csv`
-- `plot_sensitivity_ranking.png`
+## Key upgrades
+- Modular package layout under `src/eaf_twin/`.
+- Explicit tapped steel tracking (`cum_tapped_kg`, tap start/end).
+- Correct useful heat accumulation as stepwise integrated useful heat.
+- DRI modeled as charged material with mass and thermal sinks.
+- Cleaner mass/energy split (electrical, chemical, useful, losses, off-gas).
+- Robust config validation with clear errors.
+- Added unit tests and project docs.
 
-## Notes
-- Numerical integration uses explicit Euler (default `dt=2 s`), with checks for nonphysical states.
-- Results are deterministic unless measurement noise is enabled.
+## Outputs
+- Time series CSV per scenario and model.
+- Summary CSV + JSON with upgraded KPIs.
+- PNG trend plots.
 
-## Run unit tests
+## Tests
 ```bash
 python -m unittest discover -s tests -v
 ```
-
-## GitHub PR workflow check
-A GitHub Actions workflow is included at `.github/workflows/pr-test.yml`.
-It runs automatically on pull requests and executes:
-1. Dependency install
-2. Static compile checks
-3. Unit tests
-4. A short smoke simulation run with artifact upload
-
-> Note: The Docker image sets `ENTRYPOINT ["python", "eaf_simulator.py"]`, so the compose
-> `command` must pass only simulator arguments (for example `--output-dir outputs`).
