@@ -30,6 +30,7 @@ def default_config() -> FurnaceConfig:
     cfg = FurnaceConfig()
     cfg.stage_windows = default_stage_windows()
     cfg.charge_events = default_charge_events(cfg)
+    cfg.steel_melt_temp_c = 1530.0 
     return cfg
 
 
