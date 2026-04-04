@@ -23,6 +23,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -e .
 
       - name: Unit tests
         run: |
@@ -37,7 +38,7 @@ jobs:
             "measurement_noise_std": 0.0
           }
           JSON
-          python eaf_simulator.py --config ci_config.json --output-dir ci_outputs
+          python -m eaf_twin.cli run --config ci_config.json --output-dir ci_outputs
 
       - name: Upload smoke artifacts
         if: always()
