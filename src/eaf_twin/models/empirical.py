@@ -22,14 +22,14 @@ class EmpiricalModel(BaseEAFModel):
             eta = {"bore_in": 0.58, "main_melting": 0.72, "refining": 0.63, "superheat": 0.60, "tapping": 0.40}[stg]
             useful = eta * q_elec + 0.75 * q_burn + q_oxy
 
-            t_k = (state.steel_temp_c + state.slag_temp_c) * 0.5 + 273.15
-            amb_k = cfg.ambient_temp_c + 273.15
+            t_k = 0.5 * (state.steel_temp_k + state.slag_temp_k)
+            amb_k = cfg.ambient_temp_k
             q_wall = cfg.ua_wall_w_k * (t_k - amb_k) * dt
             q_rad = cfg.radiation_loss_factor * SIGMA * cfg.area_effective_m2 * (t_k**4 - amb_k**4) * dt
             q_loss = max(0.0, q_wall + max(0.0, q_rad))
 
-            q_need_scrap = cfg.cp_scrap_j_kgk * (cfg.steel_melt_temp_c - cfg.scrap_temp_c) + cfg.latent_heat_steel_j_kg
-            q_need_dri = cfg.cp_dri_j_kgk * (cfg.steel_melt_temp_c - cfg.scrap_temp_c) + cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
+            q_need_scrap = cfg.cp_scrap_j_kgk * (cfg.steel_melt_temp_k - cfg.scrap_temp_k) + cfg.latent_heat_steel_j_kg
+            q_need_dri = cfg.cp_dri_j_kgk * (cfg.steel_melt_temp_k - cfg.scrap_temp_k) + cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
             q_avail = max(0.0, useful - q_loss)
             melt_scrap = min(state.solid_scrap_kg, q_avail / max(q_need_scrap, 1e-9))
             q_left = q_avail - melt_scrap * q_need_scrap
@@ -42,9 +42,9 @@ class EmpiricalModel(BaseEAFModel):
 
             heat_cap = max(cfg.cp_steel_j_kgk * max(state.liquid_steel_kg, 10_000.0), 1e-9)
             d_t = (q_avail - q_melt) / heat_cap
-            state.steel_temp_c += d_t
-            state.slag_temp_c += 0.35 * d_t
-            state.offgas_temp_c = clamp(cfg.ambient_temp_c + 0.1 * (state.steel_temp_c - cfg.ambient_temp_c), cfg.ambient_temp_c, cfg.max_offgas_temp_c)
+            state.steel_temp_k += d_t
+            state.slag_temp_k += 0.35 * d_t
+            state.offgas_temp_k = clamp(cfg.ambient_temp_k + 0.1 * (state.steel_temp_k - cfg.ambient_temp_k), cfg.ambient_temp_k, cfg.max_offgas_temp_k)
             state.slag_kg += inputs["flux_kg_min"] / 60.0 * dt * cfg.flux_to_slag_factor
             decarb = min(state.steel_carbon_kg, inputs["oxygen_nm3_min"] / 60.0 * dt * cfg.decarb_kg_per_nm3_o2 * 0.7)
             inj_c = inputs["carbon_kg_min"] / 60.0 * dt
