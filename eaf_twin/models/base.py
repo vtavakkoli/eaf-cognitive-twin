@@ -51,13 +51,54 @@ class BaseEAFModel:
 
     def apply_charge_events(self, state: FurnaceState, t_prev_s: float, t_now_s: float) -> None:
         t_prev_min, t_now_min = t_prev_s / SECONDS_PER_MIN, t_now_s / SECONDS_PER_MIN
-        for ev in self.config.charge_events:
+        cfg = self.config
+    
+        for ev in cfg.charge_events:
             if t_prev_min < ev.time_min <= t_now_min:
-                state.solid_scrap_kg += ev.scrap_kg
-                state.solid_dri_kg += ev.dri_kg
-                shock = 10.0 + 0.00008 * (ev.scrap_kg + ev.dri_kg)
-                state.steel_temp_c -= shock
-                state.slag_temp_c -= 0.8 * shock
+                added_scrap = max(0.0, ev.scrap_kg)
+                added_dri = max(0.0, ev.dri_kg)
+                added_mass = added_scrap + added_dri
+    
+                if added_mass <= 0.0:
+                    continue
+    
+                # 1) First add the mass.
+                old_solid = state.solid_scrap_kg + state.solid_dri_kg
+                state.solid_scrap_kg += added_scrap
+                state.solid_dri_kg += added_dri
+    
+                # 2) Mix solid charge temperature.
+                cp_added = (
+                    added_scrap * cfg.cp_scrap_j_kgk +
+                    added_dri * cfg.cp_dri_j_kgk
+                ) / max(added_mass, 1e-9)
+    
+                old_cp = cfg.cp_scrap_j_kgk
+                old_solid_temp = state.solid_scrap_temp_c
+    
+                state.solid_scrap_temp_c = (
+                    old_solid * old_cp * old_solid_temp +
+                    added_mass * cp_added * cfg.scrap_temp_c
+                ) / max(old_solid * old_cp + added_mass * cp_added, 1e-9)
+    
+                # 3) Real cooling effect:
+                # cold charge extracts sensible heat from the hot liquid bath / slag.
+                target_charge_temp = min(max(state.steel_temp_c, cfg.scrap_temp_c), cfg.steel_melt_temp_c)
+    
+                q_charge_heat = (
+                    added_scrap * cfg.cp_scrap_j_kgk * max(0.0, target_charge_temp - cfg.scrap_temp_c) +
+                    added_dri * cfg.cp_dri_j_kgk * max(0.0, target_charge_temp - cfg.scrap_temp_c)
+                )
+    
+                steel_cap = max(state.liquid_steel_kg * cfg.cp_steel_j_kgk, 1.0)
+                slag_cap = max(state.slag_kg * cfg.cp_slag_j_kgk, 1.0)
+    
+                # Most cooling comes from steel bath, some from slag.
+                effective_cap = steel_cap + 0.35 * slag_cap
+                dT_mix = q_charge_heat / max(effective_cap, 1.0)
+    
+                state.steel_temp_c = max(cfg.min_temp_c, state.steel_temp_c - dT_mix)
+                state.slag_temp_c = max(cfg.min_temp_c, state.slag_temp_c - 0.35 * dT_mix)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_c, self.config.max_temp_c))
