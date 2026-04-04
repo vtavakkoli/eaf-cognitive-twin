@@ -124,7 +124,7 @@ class FirstPrinciplesModel(BaseEAFModel):
 
                 # Melt DRI (if any)
                 if state.solid_dri_kg > 0 and excess_energy_j > 0:
-                    h_sensible_dri = cfg.cp_dri_j_kgk * max(0.0, cfg.steel_melt_temp_c - cfg.scrap_temp_c)
+                    h_sensible_dri = cfg.cp_dri_j_kgk * max(0.0, safe_melt_temp - cfg.scrap_temp_c)
                     h_melt_dri = h_sensible_dri + cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
                     
                     melt_dri_kg = min(state.solid_dri_kg, excess_energy_j / h_melt_dri)
@@ -138,7 +138,7 @@ class FirstPrinciplesModel(BaseEAFModel):
 
                 # Pull the temperature back down to the melting point, plus any leftover energy 
                 # (superheat will occur if ALL solid mass is fully melted)
-                state.steel_temp_c = cfg.steel_melt_temp_c + (excess_energy_j / steel_cap)
+                state.steel_temp_c = safe_melt_temp + (excess_energy_j / steel_cap)
 
             # ---------------------------------------------------------
             # 5. Slag & Off-gas Updates
