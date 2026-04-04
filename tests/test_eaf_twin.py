@@ -108,6 +108,26 @@ class TestPhysicsAndKPIs(unittest.TestCase):
         self.assertGreater(len(superheat_rows), 0)
         self.assertTrue((superheat_rows["solid_scrap_kg"] <= 1e-6).all())
 
+    def test_near_fully_melted_requires_hot_liquid_bath(self):
+        cfg = default_config()
+        cfg.heat_duration_min = 65
+        res = FirstPrinciplesModel(cfg, enhanced=True).simulate().df
+        near_full = res[res["melted_fraction"] > 0.98]
+        if not near_full.empty:
+            self.assertTrue((near_full["liquid_steel_temp_c"] >= cfg.steel_melt_temp_c - 10.0).all())
+
+    def test_charge_event_drops_solid_temp_more_than_liquid_temp(self):
+        cfg = default_config()
+        cfg.heat_duration_min = 20
+        res = FirstPrinciplesModel(cfg, enhanced=False).simulate().df.reset_index(drop=True)
+        charge_time = min(ev.time_min for ev in cfg.charge_events if ev.time_min > 0)
+        before_idx = int(res.index[res["time_min"] < charge_time][-1])
+        after_idx = int(res.index[res["time_min"] >= charge_time][0])
+        solid_drop = float(res.loc[after_idx, "solid_scrap_temp_c"] - res.loc[before_idx, "solid_scrap_temp_c"])
+        liquid_drop = float(res.loc[after_idx, "liquid_steel_temp_c"] - res.loc[before_idx, "liquid_steel_temp_c"])
+        self.assertLess(solid_drop, -20.0)
+        self.assertGreater(liquid_drop, solid_drop)
+
 
 class TestScenarioAndOutputs(unittest.TestCase):
     def test_scenario_generation(self):

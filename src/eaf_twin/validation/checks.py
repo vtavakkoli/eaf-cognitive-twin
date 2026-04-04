@@ -11,7 +11,7 @@ def validate_state_physics(state: FurnaceState, min_temp_k: float, max_temp_k: f
             warnings.append(f"Negative mass detected: {attr}={value:.3f}; clamped to 0.")
         setattr(state, attr, max(0.0, value))
 
-    for attr in ("steel_temp_k", "slag_temp_k", "offgas_temp_k"):
+    for attr in ("steel_temp_k", "solid_scrap_temp_k", "liquid_steel_temp_k", "slag_temp_k", "offgas_temp_k"):
         value = getattr(state, attr)
         if value < min_temp_k or value > max_temp_k + 350:
             warnings.append(f"Temperature out of range in {attr}: {value:.1f} K")

@@ -46,6 +46,7 @@ class FirstPrinciplesModel(BaseEAFModel):
         def step(state, inputs, warnings):
             dt = cfg.dt_s
             stg = stage_name(state.time_s / SECONDS_PER_MIN, state.melted_fraction)
+            state.steel_temp_k = state.liquid_steel_temp_k
             power_w = inputs["power_mw"] * 1e6
             o2_flow = inputs["oxygen_nm3_min"] / 60.0
             ng_flow = inputs["ng_nm3_min"] / 60.0
@@ -83,18 +84,18 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - t_amb_k) * dt * 0.16
             q_losses = max(0.0, q_wall + max(0.0, q_rad) + q_offgas)
 
-            q_arc_to_metal = q_arc_useful * (0.88 if not self.enhanced else 0.90)
+            q_arc_to_metal = q_arc_useful * (0.90 if not self.enhanced else 0.92)
             q_arc_to_slag = q_arc_useful * 0.10
             q_arc_to_gas = q_arc_useful - q_arc_to_metal - q_arc_to_slag
-            q_burn_to_metal = q_burn * (0.50 if not self.enhanced else 0.54)
+            q_burn_to_metal = q_burn * (0.55 if not self.enhanced else 0.58)
             q_burn_to_slag = q_burn * 0.18
             q_burn_to_gas = q_burn - q_burn_to_metal - q_burn_to_slag
-            q_chem_to_metal = 0.70 * (q_oxy + q_c)
+            q_chem_to_metal = 0.76 * (q_oxy + q_c)
             q_chem_to_slag = 0.16 * (q_oxy + q_c)
             q_chem_to_gas = 0.14 * (q_oxy + q_c)
 
-            q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_k - state.steel_temp_k) * dt
-            q_metal_net = q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + q_slag_to_bath - (0.2 if not self.enhanced else 0.16) * q_losses
+            q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
+            q_liquid_net = q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + q_slag_to_bath - (0.14 if not self.enhanced else 0.12) * q_losses
             q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - 0.25 * q_losses
             q_gas_net = q_arc_to_gas + q_burn_to_gas + q_chem_to_gas + 0.15 * q_losses - q_offgas
 
@@ -105,25 +106,27 @@ class FirstPrinciplesModel(BaseEAFModel):
 
             solid_mass = state.solid_scrap_kg + state.solid_dri_kg
             total_metal_mass = max(state.liquid_steel_kg + solid_mass, 1.0)
-            cp_solid = cp_solid_steel_j_kgk(state.steel_temp_k)
-            cp_liquid = cp_liquid_steel_j_kgk(state.steel_temp_k)
+            cp_solid = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
+            cp_liquid = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
             h_melt_start = sensible_heat_solid_steel_j_kg(cfg.ambient_temp_k, cfg.steel_melt_temp_k)
             h_melt_end = h_melt_start + latent_heat_steel_j_kg()
-            if state.steel_temp_k < cfg.steel_melt_temp_k:
-                h_metal = cp_solid * (state.steel_temp_k - cfg.ambient_temp_k)
-            else:
-                h_metal = h_melt_end + cp_liquid * (state.steel_temp_k - cfg.steel_melt_temp_k)
+            h_solid = cp_solid * (state.solid_scrap_temp_k - cfg.ambient_temp_k)
+            q_solid_from_bath = 0.0
+            if solid_mass > 1e-6:
+                q_solid_from_bath = (12_500.0 if not self.enhanced else 14_000.0) * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
+                q_solid_from_bath = max(0.0, min(q_solid_from_bath, max(0.0, q_liquid_net + 0.18 * q_losses)))
 
             region = "liquid_superheat"
-            if solid_mass > 1e-6 and h_metal < h_melt_start:
+            if solid_mass > 1e-6 and h_solid < h_melt_start:
                 region = "solid_heating"
-                if q_metal_net != 0.0:
-                    state.steel_temp_k += q_metal_net / max(total_metal_mass * cp_solid, 1e-9)
-            elif solid_mass > 1e-6 and h_metal <= h_melt_end:
+                state.solid_scrap_temp_k += q_solid_from_bath / max(solid_mass * cp_solid, 1e-9)
+                q_liquid_net -= q_solid_from_bath
+                state.liquid_steel_temp_k += q_liquid_net / max(max(state.liquid_steel_kg, 8_000.0) * cp_liquid, 1e-9)
+            elif solid_mass > 1e-6 and h_solid <= h_melt_end:
                 region = "phase_change"
                 q_need_scrap = latent_heat_steel_j_kg()
                 q_need_dri = latent_heat_steel_j_kg() + cfg.dri_reduction_endotherm_j_kg
-                q_for_melt = max(0.0, q_metal_net)
+                q_for_melt = max(0.0, q_solid_from_bath + 0.20 * max(0.0, q_liquid_net))
                 melt_scrap = min(state.solid_scrap_kg, q_for_melt / max(q_need_scrap, 1e-9))
                 q_for_melt -= melt_scrap * q_need_scrap
                 melt_dri = min(state.solid_dri_kg, q_for_melt / max(q_need_dri, 1e-9))
@@ -135,32 +138,36 @@ class FirstPrinciplesModel(BaseEAFModel):
                 state.liquid_steel_kg += melt_scrap + melt_dri * cfg.dri_fe_metallization
                 state.slag_kg += melt_dri * (1.0 - cfg.dri_fe_metallization)
                 if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
-                    state.steel_temp_k = clamp(state.steel_temp_k, cfg.steel_melt_temp_k - 8.0, cfg.steel_melt_temp_k + 12.0)
+                    state.solid_scrap_temp_k = clamp(state.solid_scrap_temp_k, cfg.steel_melt_temp_k - 15.0, cfg.steel_melt_temp_k + 5.0)
+                state.liquid_steel_temp_k += (q_liquid_net - q_melt) / max(max(state.liquid_steel_kg, 10_000.0) * cp_liquid, 1e-9)
             else:
                 region = "liquid_superheat"
                 if solid_mass > 1e-6:
                     state.solid_scrap_kg = 0.0
                     state.solid_dri_kg = 0.0
-                if q_metal_net != 0.0:
-                    state.steel_temp_k += q_metal_net / max(total_metal_mass * cp_liquid, 1e-9)
+                state.liquid_steel_temp_k += q_liquid_net / max(total_metal_mass * cp_liquid, 1e-9)
+                state.solid_scrap_temp_k = cfg.steel_melt_temp_k
 
             state.slag_kg += flux_flow * dt * cfg.flux_to_slag_factor + oxide
 
             slag_cap = max(state.slag_kg * cfg.cp_slag_j_kgk, 1e-9)
             state.slag_temp_k += q_slag_net / slag_cap
 
-            gas_cap = max(offgas_flow * cfg.cp_offgas_j_kgk * dt + 2.5e5, 1e-9)
+            gas_cap = max(offgas_flow * cfg.cp_offgas_j_kgk * dt + 1.2e6, 1e-9)
             state.offgas_temp_k += q_gas_net / gas_cap
             state.offgas_temp_k = clamp(state.offgas_temp_k, cfg.ambient_temp_k, cfg.max_offgas_temp_k)
 
             if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
-                state.steel_temp_k = min(state.steel_temp_k, cfg.steel_melt_temp_k + 20.0)
-            state.steel_temp_k = max(state.steel_temp_k, cfg.ambient_temp_k)
+                state.solid_scrap_temp_k = min(state.solid_scrap_temp_k, cfg.steel_melt_temp_k + 10.0)
+            state.solid_scrap_temp_k = max(state.solid_scrap_temp_k, cfg.ambient_temp_k)
+            state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, cfg.steel_melt_temp_k if state.liquid_steel_kg > 1e-6 else cfg.ambient_temp_k)
+            state.steel_temp_k = state.liquid_steel_temp_k
             state.slag_temp_k = max(state.slag_temp_k, cfg.ambient_temp_k)
 
-            if state.melted_fraction >= 0.999 and state.steel_temp_k < cfg.steel_melt_temp_k - 1.0:
-                warnings.append("Inconsistent state: full melt reached below steel melting range; clamped.")
-                state.steel_temp_k = cfg.steel_melt_temp_k
+            if state.melted_fraction >= 0.98 and state.liquid_steel_temp_k < cfg.steel_melt_temp_k - 1.0:
+                warnings.append("Inconsistent state: near-complete melt reached below steel melting range; clamped.")
+                state.liquid_steel_temp_k = cfg.steel_melt_temp_k
+                state.steel_temp_k = state.liquid_steel_temp_k
 
             tapped = start_or_continue_tapping(state, cfg)
             state.cum_electric_j += q_elec
@@ -179,7 +186,7 @@ class FirstPrinciplesModel(BaseEAFModel):
                 "q_loss_mw": q_losses / dt / 1e6,
                 "melt_rate_kg_s": melt_rate_kg_s,
                 "phase_region": region,
-                "h_steel_sensible_mj": sensible_heat_liquid_steel_j_kg(cfg.ambient_temp_k, state.steel_temp_k) * state.liquid_steel_kg / 1e6,
+                "h_steel_sensible_mj": sensible_heat_liquid_steel_j_kg(cfg.ambient_temp_k, state.liquid_steel_temp_k) * state.liquid_steel_kg / 1e6,
                 "h_slag_sensible_mj": slag_sensible_enthalpy_j_kg(cfg.ambient_temp_k, state.slag_temp_k) * state.slag_kg / 1e6,
                 "h_offgas_sensible_mj": offgas_sensible_enthalpy_j_kg(cfg.ambient_temp_k, state.offgas_temp_k) * offgas_flow * dt / 1e6,
                 "tapped_kg_s": tapped / dt,
