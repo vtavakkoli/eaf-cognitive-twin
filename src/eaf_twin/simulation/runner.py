@@ -27,11 +27,7 @@ def run_full_simulation(config, output_dir: Path) -> pd.DataFrame:
             result = model.simulate()
             issues = plausibility_checks(result.summary)
             save_time_series(result.df, output_dir, f"timeseries_{scen_name}_{result.model_name}.csv")
-<<<<<<< HEAD
             plot_core(result.df, output_dir, scen_name, result.model_name)
-=======
-            plot_core(result.df, output_dir, f"{scen_name}_{result.model_name}")
->>>>>>> main
             rows.append(
                 {
                     "scenario": scen_name,
