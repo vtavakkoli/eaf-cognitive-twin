@@ -22,6 +22,11 @@ class FirstPrinciplesModel(BaseEAFModel):
 
         def step(state, inputs, warnings):
             dt = cfg.dt_s
+            
+            # Safety check to avoid division by zero errors before pool forms
+            total_metal = state.solid_scrap_kg + state.solid_dri_kg + state.liquid_steel_kg
+            state.melted_fraction = clamp(state.liquid_steel_kg / max(total_metal, 1.0), 0.0, 1.0)
+            
             stg = stage_name(state.time_s / SECONDS_PER_MIN, state.melted_fraction)
             power_w = inputs["power_mw"] * 1e6
             o2_flow = inputs["oxygen_nm3_min"] / 60.0
@@ -34,9 +39,16 @@ class FirstPrinciplesModel(BaseEAFModel):
                 ratio = c_flow / max(o2_flow * 0.18, 1e-3)
                 foam = clamp(0.35 + 0.22 * math.tanh(1.6 * (ratio - 1.0)), 0.05, 0.95)
             
-            eta = {"bore_in": cfg.eta_arc_bore_in, "main_melting": cfg.eta_arc_melting, "refining": cfg.eta_arc_refining, "superheat": cfg.eta_arc_superheat, "tapping": 0.4}[stg]
-            eta += 0.04 * smooth_step(state.melted_fraction, 0.2, 0.95)
-            eta += 0.05 * foam
+            # Safely fetch stage efficiency with a fallback
+            base_eta = {
+                "bore_in": cfg.eta_arc_bore_in, 
+                "main_melting": cfg.eta_arc_melting, 
+                "refining": cfg.eta_arc_refining, 
+                "superheat": cfg.eta_arc_superheat, 
+                "tapping": 0.4
+            }.get(stg, 0.7)
+            
+            eta = base_eta + 0.04 * smooth_step(state.melted_fraction, 0.2, 0.95) + 0.05 * foam
             eta = clamp(eta, 0.4, 0.92)
 
             # ---------------------------------------------------------
@@ -52,7 +64,6 @@ class FirstPrinciplesModel(BaseEAFModel):
             # ---------------------------------------------------------
             # 2. Oxidation & Chemical Mass Tracking
             # ---------------------------------------------------------
-            # Prevent oxidizing more steel than currently exists
             fe_oxid = min(max(0.0, state.liquid_steel_kg) * 0.0015, o2_flow * cfg.fe_oxidation_ratio_per_nm3_o2 * dt)
             oxide = 1.29 * fe_oxid
             decarb = min(state.steel_carbon_kg, o2_flow * cfg.decarb_kg_per_nm3_o2 * dt)
@@ -77,56 +88,61 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_c - state.steel_temp_c) * dt
 
             # ---------------------------------------------------------
-            # 4. Temperature & Melting Thermodynamics (The Fix)
+            # 4. Temperature & Melting Thermodynamics
             # ---------------------------------------------------------
-            # Calculate total heat entering the metal bath this time step
             q_net_to_bath = q_arc_useful + 0.55 * q_burn + 0.5 * (q_oxy + q_c) + q_slag_to_bath - 0.55 * q_losses
             
-            # The thermal mass needs to include the solid scrap, not just liquid steel
-            total_metal_mass = state.solid_scrap_kg + state.solid_dri_kg + state.liquid_steel_kg
-            steel_cap = max(cfg.cp_steel_j_kgk * max(total_metal_mass, 12000.0), 1e-9)
-            slag_cap = max(cfg.cp_slag_j_kgk * max(state.slag_kg, 4000.0), 1e-9)
-            gas_cap = max(offgas_flow * cfg.cp_offgas_j_kgk * dt + 2.5e5, 1e-9)
+            # The thermal mass active in temperature changes is the liquid pool
+            active_liquid_mass = max(state.liquid_steel_kg, 1000.0)
+            steel_cap = max(cfg.cp_steel_j_kgk * active_liquid_mass, 1e-9)
 
-            # Step 4a. Apply all net heat to raise the bath temperature first
+            # Step 4a: Add heat to the liquid pool
             state.steel_temp_c += q_net_to_bath / steel_cap
             
-            q_melt = 0.0 # Track energy actually used for phase change
+            q_melt = 0.0 
             
-            # Step 4b. If we hit the melting point, convert excess energy into melting (Latent Heat)
-            if state.steel_temp_c >= cfg.steel_melt_temp_c:
-                # Calculate how much energy pushed the temp above the melting point
+            # Step 4b: If pool exceeds melting point, excess heat flows into solid scrap to melt it
+            if state.steel_temp_c > cfg.steel_melt_temp_c:
                 excess_energy_j = (state.steel_temp_c - cfg.steel_melt_temp_c) * steel_cap
                 
-                # Melt solid scrap using latent heat
-                if state.solid_scrap_kg > 0:
-                    melt_scrap_kg = min(state.solid_scrap_kg, excess_energy_j / max(cfg.latent_heat_steel_j_kg, 1e-9))
+                # To melt scrap, we must first heat it to the melting point (Sensible Heat) + melt it (Latent Heat)
+                h_sensible_scrap = cfg.cp_scrap_j_kgk * max(0.0, cfg.steel_melt_temp_c - cfg.scrap_temp_c)
+                h_melt_scrap = h_sensible_scrap + cfg.latent_heat_steel_j_kg
+
+                # Melt solid scrap
+                if state.solid_scrap_kg > 0 and excess_energy_j > 0:
+                    melt_scrap_kg = min(state.solid_scrap_kg, excess_energy_j / h_melt_scrap)
                     state.solid_scrap_kg -= melt_scrap_kg
                     state.liquid_steel_kg += melt_scrap_kg
                     
-                    energy_used = melt_scrap_kg * cfg.latent_heat_steel_j_kg
+                    energy_used = melt_scrap_kg * h_melt_scrap
                     excess_energy_j -= energy_used
                     q_melt += energy_used
 
-                # Melt DRI if there is still excess energy
+                # Melt DRI (if any)
                 if state.solid_dri_kg > 0 and excess_energy_j > 0:
-                    dri_heat_req_j_kg = cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
-                    melt_dri_kg = min(state.solid_dri_kg, excess_energy_j / max(dri_heat_req_j_kg, 1e-9))
+                    h_sensible_dri = cfg.cp_dri_j_kgk * max(0.0, cfg.steel_melt_temp_c - cfg.scrap_temp_c)
+                    h_melt_dri = h_sensible_dri + cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
+                    
+                    melt_dri_kg = min(state.solid_dri_kg, excess_energy_j / h_melt_dri)
                     state.solid_dri_kg -= melt_dri_kg
                     state.liquid_steel_kg += melt_dri_kg * cfg.dri_fe_metallization
                     state.slag_kg += melt_dri_kg * (1.0 - cfg.dri_fe_metallization)
                     
-                    energy_used = melt_dri_kg * dri_heat_req_j_kg
+                    energy_used = melt_dri_kg * h_melt_dri
                     excess_energy_j -= energy_used
                     q_melt += energy_used
 
                 # Pull the temperature back down to the melting point, plus any leftover energy 
-                # (superheat) if ALL solid mass was completely melted.
+                # (superheat will occur if ALL solid mass is fully melted)
                 state.steel_temp_c = cfg.steel_melt_temp_c + (excess_energy_j / steel_cap)
 
             # ---------------------------------------------------------
             # 5. Slag & Off-gas Updates
             # ---------------------------------------------------------
+            slag_cap = max(cfg.cp_slag_j_kgk * max(state.slag_kg, 2000.0), 1e-9)
+            gas_cap = max(offgas_flow * cfg.cp_offgas_j_kgk * dt + 2.5e5, 1e-9)
+
             state.slag_kg += flux_flow * dt * cfg.flux_to_slag_factor + oxide
             
             state.slag_temp_c += (0.25 * q_burn + 0.25 * (q_oxy + q_c) - q_slag_to_bath - 0.2 * q_losses) / slag_cap
