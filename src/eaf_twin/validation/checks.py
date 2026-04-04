@@ -3,7 +3,7 @@ from __future__ import annotations
 from eaf_twin.domain.models import FurnaceState
 
 
-def validate_state_physics(state: FurnaceState, min_temp_k: float, max_temp_k: float) -> list[str]:
+def validate_state_physics(state: FurnaceState, min_temp_c: float, max_temp_c: float) -> list[str]:
     warnings: list[str] = []
     for attr in ("solid_scrap_kg", "solid_dri_kg", "liquid_steel_kg", "slag_kg", "steel_carbon_kg", "feo_slag_kg"):
         value = getattr(state, attr)
@@ -11,14 +11,11 @@ def validate_state_physics(state: FurnaceState, min_temp_k: float, max_temp_k: f
             warnings.append(f"Negative mass detected: {attr}={value:.3f}; clamped to 0.")
         setattr(state, attr, max(0.0, value))
 
-    for attr in ("steel_temp_k", "solid_scrap_temp_k", "liquid_steel_temp_k", "slag_temp_k", "offgas_temp_k"):
+    for attr in ("steel_temp_c", "slag_temp_c", "offgas_temp_c"):
         value = getattr(state, attr)
-        if value < min_temp_k or value > max_temp_k + 350:
-            warnings.append(f"Temperature out of range in {attr}: {value:.1f} K")
-        setattr(state, attr, max(min_temp_k, min(max_temp_k + 350.0, value)))
-
-    if not (0.0 <= state.melted_fraction <= 1.0):
-        warnings.append(f"Melted fraction out of range: {state.melted_fraction:.4f}")
+        if value < min_temp_c or value > max_temp_c + 350:
+            warnings.append(f"Temperature out of range in {attr}: {value:.1f} C")
+        setattr(state, attr, max(min_temp_c, min(max_temp_c + 350.0, value)))
     return warnings
 
 

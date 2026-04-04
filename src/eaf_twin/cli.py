@@ -3,14 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from eaf_twin.config.loader import load_config
-from eaf_twin.simulation.runner import run_full_simulation
+import eaf_simulator as legacy
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="EAF cognitive digital twin")
     sub = parser.add_subparsers(dest="command", required=True)
-    run = sub.add_parser("run", help="Run full src/eaf_twin simulation pipeline")
+    run = sub.add_parser("run", help="Run full legacy-calibrated simulation pipeline")
     run.add_argument("--config", type=Path, default=None)
     run.add_argument("--output-dir", type=Path, default=Path("outputs"))
     run.add_argument("--dt", type=float, default=None)
@@ -24,7 +23,7 @@ def main() -> None:
     if args.command != "run":
         raise ValueError(f"Unsupported command: {args.command}")
 
-    cfg = load_config(args.config)
+    cfg = legacy.load_config(args.config)
     if args.dt is not None:
         if args.dt <= 0 or args.dt > 20:
             raise ValueError("dt must be within (0, 20] seconds")
@@ -36,7 +35,7 @@ def main() -> None:
     if args.seed is not None:
         cfg.random_seed = args.seed
 
-    run_full_simulation(cfg, args.output_dir)
+    legacy.run_full_simulation(cfg, args.output_dir)
 
 
 if __name__ == "__main__":
