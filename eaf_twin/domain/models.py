@@ -107,6 +107,7 @@ class FurnaceState:
     offgas_temp_c: float
     steel_carbon_kg: float
     feo_slag_kg: float
+    solid_scrap_temp_c: float
 
     cum_electric_j: float = 0.0
     cum_chemical_j: float = 0.0
