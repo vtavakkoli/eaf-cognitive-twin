@@ -39,11 +39,13 @@ class FurnaceConfig:
     initial_dri_kg: float = 0.0
     initial_slag_kg: float = 2_500.0
 
-    ambient_temp_c: float = 25.0
-    scrap_temp_c: float = 25.0
-    initial_steel_temp_c: float = 1550.0
-    initial_slag_temp_c: float = 1550.0
-    initial_offgas_temp_c: float = 400.0
+    ambient_temp_c: float = 23.0
+    scrap_temp_c: float = 23.0
+    initial_steel_temp_c: float = 23.0
+    initial_slag_temp_c: float = 23.0
+    initial_offgas_temp_c: float = 23.0
+    initial_hot_heel_kg: float = 0.0
+    initial_hot_heel_temp_c: float = 1600.0
     tap_target_temp_c: float = 1645.0
 
     cp_steel_j_kgk: float = 820.0
@@ -94,6 +96,34 @@ class FurnaceConfig:
     downtime_start_min: Optional[float] = None
     downtime_duration_min: float = 0.0
 
+    @property
+    def ambient_temp_k(self) -> float:
+        return self.ambient_temp_c + 273.15
+
+    @property
+    def scrap_temp_k(self) -> float:
+        return self.scrap_temp_c + 273.15
+
+    @property
+    def steel_melt_temp_k(self) -> float:
+        return self.steel_melt_temp_c + 273.15
+
+    @property
+    def tap_target_temp_k(self) -> float:
+        return self.tap_target_temp_c + 273.15
+
+    @property
+    def max_offgas_temp_k(self) -> float:
+        return self.max_offgas_temp_c + 273.15
+
+    @property
+    def max_temp_k(self) -> float:
+        return self.max_temp_c + 273.15
+
+    @property
+    def min_temp_k(self) -> float:
+        return self.min_temp_c + 273.15
+
 
 @dataclass
 class FurnaceState:
@@ -102,9 +132,9 @@ class FurnaceState:
     solid_dri_kg: float
     liquid_steel_kg: float
     slag_kg: float
-    steel_temp_c: float
-    slag_temp_c: float
-    offgas_temp_c: float
+    steel_temp_k: float
+    slag_temp_k: float
+    offgas_temp_k: float
     steel_carbon_kg: float
     feo_slag_kg: float
 
