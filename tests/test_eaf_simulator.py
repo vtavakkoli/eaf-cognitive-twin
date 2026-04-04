@@ -26,6 +26,7 @@ class TestLegacyWrapper(unittest.TestCase):
             cp = subprocess.run([sys.executable, "eaf_simulator.py", "--output-dir", td], capture_output=True, text=True, check=False)
             self.assertEqual(cp.returncode, 0, msg=cp.stderr)
             self.assertTrue((Path(td) / "summary_all_scenarios.csv").exists())
+            self.assertTrue((Path(td) / "result.html").exists())
 
 
 if __name__ == "__main__":
