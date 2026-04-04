@@ -108,37 +108,45 @@ class FirstPrinciplesModel(BaseEAFModel):
             total_metal_mass = max(state.liquid_steel_kg + solid_mass, 1.0)
             cp_solid = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
             cp_liquid = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
-            h_melt_start = sensible_heat_solid_steel_j_kg(cfg.ambient_temp_k, cfg.steel_melt_temp_k)
-            h_melt_end = h_melt_start + latent_heat_steel_j_kg()
-            h_solid = cp_solid * (state.solid_scrap_temp_k - cfg.ambient_temp_k)
+
             q_solid_from_bath = 0.0
             if solid_mass > 1e-6:
                 q_solid_from_bath = (12_500.0 if not self.enhanced else 14_000.0) * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
-                q_solid_from_bath = max(0.0, min(q_solid_from_bath, max(0.0, q_liquid_net + 0.18 * q_losses)))
+                # FIX 2: Limit by the actual sensible heat available in the hot liquid pool rather than the instantaneous arc power
+                max_q_from_bath = max(0.0, state.liquid_steel_kg * cp_liquid * (state.liquid_steel_temp_k - state.solid_scrap_temp_k))
+                q_solid_from_bath = max(0.0, min(q_solid_from_bath, max_q_from_bath))
 
             region = "liquid_superheat"
-            if solid_mass > 1e-6 and h_solid < h_melt_start:
+            
+            # FIX 3: Use pure temperature comparison (with 0.5K tolerance) rather than enthalpy to prevent logic hanging
+            if solid_mass > 1e-6 and state.solid_scrap_temp_k < cfg.steel_melt_temp_k - 0.5:
                 region = "solid_heating"
                 state.solid_scrap_temp_k += q_solid_from_bath / max(solid_mass * cp_solid, 1e-9)
                 q_liquid_net -= q_solid_from_bath
                 state.liquid_steel_temp_k += q_liquid_net / max(max(state.liquid_steel_kg, 8_000.0) * cp_liquid, 1e-9)
-            elif solid_mass > 1e-6 and h_solid <= h_melt_end:
+            elif solid_mass > 1e-6:
                 region = "phase_change"
                 q_need_scrap = latent_heat_steel_j_kg()
                 q_need_dri = latent_heat_steel_j_kg() + cfg.dri_reduction_endotherm_j_kg
                 q_for_melt = max(0.0, q_solid_from_bath + 0.20 * max(0.0, q_liquid_net))
+                
                 melt_scrap = min(state.solid_scrap_kg, q_for_melt / max(q_need_scrap, 1e-9))
                 q_for_melt -= melt_scrap * q_need_scrap
+                
                 melt_dri = min(state.solid_dri_kg, q_for_melt / max(q_need_dri, 1e-9))
                 q_for_melt -= melt_dri * q_need_dri
+                
                 q_melt = melt_scrap * q_need_scrap + melt_dri * q_need_dri
                 melt_rate_kg_s = (melt_scrap + melt_dri) / max(dt, 1e-9)
+                
                 state.solid_scrap_kg -= melt_scrap
                 state.solid_dri_kg -= melt_dri
                 state.liquid_steel_kg += melt_scrap + melt_dri * cfg.dri_fe_metallization
                 state.slag_kg += melt_dri * (1.0 - cfg.dri_fe_metallization)
+                
                 if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
                     state.solid_scrap_temp_k = clamp(state.solid_scrap_temp_k, cfg.steel_melt_temp_k - 15.0, cfg.steel_melt_temp_k + 5.0)
+                
                 state.liquid_steel_temp_k += (q_liquid_net - q_melt) / max(max(state.liquid_steel_kg, 10_000.0) * cp_liquid, 1e-9)
             else:
                 region = "liquid_superheat"
@@ -159,8 +167,11 @@ class FirstPrinciplesModel(BaseEAFModel):
 
             if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
                 state.solid_scrap_temp_k = min(state.solid_scrap_temp_k, cfg.steel_melt_temp_k + 10.0)
+                
             state.solid_scrap_temp_k = max(state.solid_scrap_temp_k, cfg.ambient_temp_k)
-            state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, cfg.steel_melt_temp_k if state.liquid_steel_kg > 1e-6 else cfg.ambient_temp_k)
+            
+            # FIX 1: Allow the liquid pool to properly drop in temperature below melting point if thermodynamic logic demands it
+            state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, cfg.ambient_temp_k)
             state.steel_temp_k = state.liquid_steel_temp_k
             state.slag_temp_k = max(state.slag_temp_k, cfg.ambient_temp_k)
 
@@ -177,6 +188,7 @@ class FirstPrinciplesModel(BaseEAFModel):
             state.cum_oxygen_nm3 += o2_flow * dt
             state.cum_ng_nm3 += ng_flow * dt
             state.cum_carbon_kg += c_flow * dt
+            
             return {
                 "stage": stg,
                 "foamy_factor": foam,
