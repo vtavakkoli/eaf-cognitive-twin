@@ -101,31 +101,50 @@ class FirstPrinciplesModel(BaseEAFModel):
             melt_scrap = 0.0
             melt_dri = 0.0
             q_melt = 0.0
+            melt_rate_kg_s = 0.0
 
             solid_mass = state.solid_scrap_kg + state.solid_dri_kg
             total_metal_mass = max(state.liquid_steel_kg + solid_mass, 1.0)
-            if q_metal_net > 0.0 and solid_mass > 0.0:
-                q_need_scrap = sensible_heat_solid_steel_j_kg(cfg.ambient_temp_k, cfg.steel_melt_temp_k) + latent_heat_steel_j_kg()
-                q_need_dri = q_need_scrap + cfg.dri_reduction_endotherm_j_kg
-                melt_scrap = min(state.solid_scrap_kg, q_metal_net / max(q_need_scrap, 1e-9))
-                q_metal_net -= melt_scrap * q_need_scrap
-                melt_dri = min(state.solid_dri_kg, max(0.0, q_metal_net) / max(q_need_dri, 1e-9))
-                q_metal_net -= melt_dri * q_need_dri
+            cp_solid = cp_solid_steel_j_kgk(state.steel_temp_k)
+            cp_liquid = cp_liquid_steel_j_kgk(state.steel_temp_k)
+            h_melt_start = sensible_heat_solid_steel_j_kg(cfg.ambient_temp_k, cfg.steel_melt_temp_k)
+            h_melt_end = h_melt_start + latent_heat_steel_j_kg()
+            if state.steel_temp_k < cfg.steel_melt_temp_k:
+                h_metal = cp_solid * (state.steel_temp_k - cfg.ambient_temp_k)
+            else:
+                h_metal = h_melt_end + cp_liquid * (state.steel_temp_k - cfg.steel_melt_temp_k)
+
+            region = "liquid_superheat"
+            if solid_mass > 1e-6 and h_metal < h_melt_start:
+                region = "solid_heating"
+                if q_metal_net != 0.0:
+                    state.steel_temp_k += q_metal_net / max(total_metal_mass * cp_solid, 1e-9)
+            elif solid_mass > 1e-6 and h_metal <= h_melt_end:
+                region = "phase_change"
+                q_need_scrap = latent_heat_steel_j_kg()
+                q_need_dri = latent_heat_steel_j_kg() + cfg.dri_reduction_endotherm_j_kg
+                q_for_melt = max(0.0, q_metal_net)
+                melt_scrap = min(state.solid_scrap_kg, q_for_melt / max(q_need_scrap, 1e-9))
+                q_for_melt -= melt_scrap * q_need_scrap
+                melt_dri = min(state.solid_dri_kg, q_for_melt / max(q_need_dri, 1e-9))
+                q_for_melt -= melt_dri * q_need_dri
                 q_melt = melt_scrap * q_need_scrap + melt_dri * q_need_dri
+                melt_rate_kg_s = (melt_scrap + melt_dri) / max(dt, 1e-9)
+                state.solid_scrap_kg -= melt_scrap
+                state.solid_dri_kg -= melt_dri
+                state.liquid_steel_kg += melt_scrap + melt_dri * cfg.dri_fe_metallization
+                state.slag_kg += melt_dri * (1.0 - cfg.dri_fe_metallization)
+                if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
+                    state.steel_temp_k = clamp(state.steel_temp_k, cfg.steel_melt_temp_k - 8.0, cfg.steel_melt_temp_k + 12.0)
+            else:
+                region = "liquid_superheat"
+                if solid_mass > 1e-6:
+                    state.solid_scrap_kg = 0.0
+                    state.solid_dri_kg = 0.0
+                if q_metal_net != 0.0:
+                    state.steel_temp_k += q_metal_net / max(total_metal_mass * cp_liquid, 1e-9)
 
-            state.solid_scrap_kg -= melt_scrap
-            state.solid_dri_kg -= melt_dri
-            state.liquid_steel_kg += melt_scrap + melt_dri * cfg.dri_fe_metallization
-            state.slag_kg += flux_flow * dt * cfg.flux_to_slag_factor + oxide + melt_dri * (1.0 - cfg.dri_fe_metallization)
-
-            if state.solid_scrap_kg + state.solid_dri_kg <= 1e-6 and q_metal_net != 0.0:
-                cp_metal = cp_liquid_steel_j_kgk(state.steel_temp_k)
-                state.steel_temp_k += q_metal_net / max(total_metal_mass * cp_metal, 1e-9)
-            elif state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
-                state.steel_temp_k = max(
-                    state.steel_temp_k,
-                    cfg.ambient_temp_k + max(0.0, min(1.0, state.melted_fraction)) * (cfg.steel_melt_temp_k - cfg.ambient_temp_k),
-                )
+            state.slag_kg += flux_flow * dt * cfg.flux_to_slag_factor + oxide
 
             slag_cap = max(state.slag_kg * cfg.cp_slag_j_kgk, 1e-9)
             state.slag_temp_k += q_slag_net / slag_cap
@@ -158,6 +177,8 @@ class FirstPrinciplesModel(BaseEAFModel):
                 "q_useful_mw": (q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + max(0.0, q_slag_to_bath)) / dt / 1e6,
                 "q_melt_mw": q_melt / dt / 1e6,
                 "q_loss_mw": q_losses / dt / 1e6,
+                "melt_rate_kg_s": melt_rate_kg_s,
+                "phase_region": region,
                 "h_steel_sensible_mj": sensible_heat_liquid_steel_j_kg(cfg.ambient_temp_k, state.steel_temp_k) * state.liquid_steel_kg / 1e6,
                 "h_slag_sensible_mj": slag_sensible_enthalpy_j_kg(cfg.ambient_temp_k, state.slag_temp_k) * state.slag_kg / 1e6,
                 "h_offgas_sensible_mj": offgas_sensible_enthalpy_j_kg(cfg.ambient_temp_k, state.offgas_temp_k) * offgas_flow * dt / 1e6,

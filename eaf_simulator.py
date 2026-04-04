@@ -509,7 +509,7 @@ class EmpiricalModel(BaseEAFModel):
             inputs = active_setpoints(cfg, t_min)
             stg = stage_name(t_min, state.melted_fraction)
 
-            self.apply_charge_events(state, state.time_s - cfg.dt_s, state.time_s)
+            self.apply_charge_events(state, max(0.0, state.time_s - cfg.dt_s), state.time_s)
             dt = cfg.dt_s
 
             power_w = inputs["power_mw"] * 1e6
@@ -1025,6 +1025,114 @@ def run_sensitivity(base: FurnaceConfig, out_dir: Path) -> Tuple[pd.DataFrame, P
     return sens_df, sens_plot
 
 
+def write_result_html(
+    output_dir: Path,
+    summary_rows: List[Dict[str, float]],
+    scenarios: List[str],
+    model_names: List[str],
+) -> Path:
+    """Create a single tabbed HTML report for Model A/B/C results."""
+    summary_df = pd.DataFrame(summary_rows)
+    model_labels = {
+        "Model_A_empirical": "Model A",
+        "Model_B_first_principles": "Model B",
+        "Model_C_enhanced_hybrid": "Model C",
+    }
+
+    def model_section(model_name: str) -> str:
+        label = model_labels.get(model_name, model_name)
+        subset = summary_df[summary_df["model"] == model_name].copy()
+        if subset.empty:
+            table_html = "<p>No rows available.</p>"
+        else:
+            keep_cols = [
+                "scenario",
+                "status",
+                "tap_temp_c",
+                "melted_fraction",
+                "tap_steel_kg",
+                "electric_kwh_t",
+                "oxygen_nm3_t",
+                "ng_nm3_t",
+                "issues",
+            ]
+            available_cols = [c for c in keep_cols if c in subset.columns]
+            table_html = subset[available_cols].round(3).to_html(index=False, classes="summary-table", border=0)
+
+        plot_blocks = []
+        for scen in scenarios:
+            prefix = f"{scen}_{model_name}"
+            ts_name = f"timeseries_{prefix}.csv"
+            image_glob = sorted(output_dir.glob(f"plot_{prefix}_*.png"))
+            images_html = "".join(f'<img src="{p.name}" alt="{p.name}" loading="lazy"/>' for p in image_glob)
+            plot_blocks.append(
+                f"""
+                <div class="scenario-block">
+                  <h4>{scen}</h4>
+                  <p><a href="{ts_name}">{ts_name}</a></p>
+                  <div class="plot-grid">{images_html or "<p>No plots found.</p>"}</div>
+                </div>
+                """
+            )
+
+        return f"""
+        <section id="{model_name}" class="tab-panel">
+          <h2>{label} ({model_name})</h2>
+          <h3>Summary table</h3>
+          {table_html}
+          <h3>Scenario plots</h3>
+          {''.join(plot_blocks)}
+        </section>
+        """
+
+    tabs = "".join(
+        f'<button class="tab-btn{" active" if i == 0 else ""}" data-target="{m}">{model_labels.get(m, m)}</button>'
+        for i, m in enumerate(model_names)
+    )
+    panels = "".join(model_section(m) for m in model_names)
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EAF Results</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+    .tabs {{ display: flex; gap: 8px; margin-bottom: 12px; }}
+    .tab-btn {{ border: 1px solid #999; background: #f0f0f0; padding: 8px 12px; cursor: pointer; }}
+    .tab-btn.active {{ background: #d7e8ff; border-color: #2c6fbb; }}
+    .tab-panel {{ display: none; }}
+    .tab-panel.active {{ display: block; }}
+    .summary-table {{ border-collapse: collapse; width: 100%; margin-bottom: 14px; }}
+    .summary-table th, .summary-table td {{ border: 1px solid #ccc; padding: 6px; font-size: 13px; }}
+    .scenario-block {{ margin: 16px 0 26px; }}
+    .plot-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }}
+    .plot-grid img {{ width: 100%; border: 1px solid #ddd; border-radius: 4px; }}
+  </style>
+</head>
+<body>
+  <h1>EAF Simulation Results</h1>
+  <p>Generated report includes Model A / Model B / Model C tabs with tables and plots.</p>
+  <div class="tabs">{tabs}</div>
+  {panels}
+  <script>
+    const buttons = Array.from(document.querySelectorAll('.tab-btn'));
+    const panels = Array.from(document.querySelectorAll('.tab-panel'));
+    function activate(target) {{
+      buttons.forEach(btn => btn.classList.toggle('active', btn.dataset.target === target));
+      panels.forEach(panel => panel.classList.toggle('active', panel.id === target));
+    }}
+    buttons.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.target)));
+    if (buttons.length > 0) activate(buttons[0].dataset.target);
+  </script>
+</body>
+</html>
+"""
+    out_path = output_dir / "result.html"
+    out_path.write_text(html, encoding="utf-8")
+    return out_path
+
+
 # -----------------------------
 # Main run pipeline
 # -----------------------------
@@ -1067,6 +1175,8 @@ def run_full_simulation(config: FurnaceConfig, output_dir: Path) -> None:
 
     save_summary_table(all_summary_rows, output_dir, "all_scenarios")
     run_sensitivity(config, output_dir)
+    model_names = ["Model_A_empirical", "Model_B_first_principles", "Model_C_enhanced_hybrid"]
+    write_result_html(output_dir, all_summary_rows, list(scenarios.keys()), model_names)
 
     summary_df = pd.DataFrame(all_summary_rows)
     print("\n=== EAF Simulation Completed ===")
