@@ -5,9 +5,8 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src /app/src
-COPY eaf_twin /app/eaf_twin
 COPY configs /app/configs
-COPY eaf_simulator.py /app/
+ENV PYTHONPATH=/app/src
 
 ENTRYPOINT ["python", "-m", "eaf_twin.cli"]
 CMD ["run", "--config", "configs/base_case.json", "--output-dir", "outputs"]
