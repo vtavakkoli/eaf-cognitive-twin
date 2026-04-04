@@ -114,6 +114,7 @@ class BaseEAFModel:
             "slag_kg": state.slag_kg,
             "steel_temp_c": state.steel_temp_c,
             "slag_temp_c": state.slag_temp_c,
+            "solid_scrap_temp_c": state.solid_scrap_temp_c,
             "offgas_temp_c": state.offgas_temp_c,
             "melted_fraction": state.melted_fraction,
             "cum_electric_mwh": state.cum_electric_j / J_PER_MWH,
