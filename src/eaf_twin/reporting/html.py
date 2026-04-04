@@ -47,7 +47,11 @@ def write_result_html(
         plot_blocks = []
         for scen in scenarios:
             ts_name = f"timeseries_{scen}_{model_name}.csv"
+<<<<<<< HEAD
+            image_glob = sorted(output_dir.glob(f"plot_{scen}_*_{model_name}.png"))
+=======
             image_glob = sorted(output_dir.glob(f"plot_{scen}_{model_name}_*.png"))
+>>>>>>> main
             images_html = "".join(
                 f'<figure><img src="{p.name}" alt="{p.name}" loading="lazy"/><figcaption>{p.name}</figcaption></figure>'
                 for p in image_glob
