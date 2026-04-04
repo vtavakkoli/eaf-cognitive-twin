@@ -95,11 +95,13 @@ class FurnaceConfig:
     initial_scrap_kg: float = 105_000.0
     initial_dri_fraction: float = 0.0
     initial_slag_kg: float = 2_500.0
+    initial_hot_heel_kg: float = 8_000.0
 
     # Temperatures [degC]
     ambient_temp_c: float = 25.0
     scrap_temp_c: float = 25.0
     initial_steel_temp_c: float = 1550.0
+    initial_hot_heel_temp_c: float = 1600.0
     initial_slag_temp_c: float = 1550.0
     initial_offgas_temp_c: float = 400.0
     tap_target_temp_c: float = 1645.0
@@ -356,20 +358,31 @@ class BaseEAFModel:
             if abs(event.time_min) < 1e-9:
                 first_charge += event.scrap_kg
                 dri_charge += event.dri_kg
+
         if first_charge <= 0:
             first_charge = 0.55 * self.config.initial_scrap_kg
 
         init_solid = first_charge + dri_charge
-        init_liquid = 8_000.0
-        init_carbon = 0.006 * init_liquid
+        init_liquid = self.config.initial_hot_heel_kg
+        init_carbon = 0.006 * max(init_liquid, 1.0)
+        init_steel_temp = (
+            self.config.initial_hot_heel_temp_c
+            if init_liquid > 0
+            else self.config.initial_steel_temp_c
+        )
+        init_slag_temp = (
+            max(self.config.initial_slag_temp_c, self.config.initial_hot_heel_temp_c - 80.0)
+            if init_liquid > 0 and self.config.initial_slag_kg > 0
+            else self.config.initial_slag_temp_c
+        )
 
         return FurnaceState(
             time_s=0.0,
             solid_scrap_kg=init_solid,
             liquid_steel_kg=init_liquid,
             slag_kg=self.config.initial_slag_kg,
-            steel_temp_c=self.config.initial_steel_temp_c,
-            slag_temp_c=self.config.initial_slag_temp_c,
+            steel_temp_c=init_steel_temp,
+            slag_temp_c=init_slag_temp,
             offgas_temp_c=self.config.initial_offgas_temp_c,
             steel_carbon_kg=init_carbon,
             feo_slag_kg=350.0,
@@ -681,10 +694,12 @@ class FirstPrinciplesModel(BaseEAFModel):
         fe_oxid_m = min(state.liquid_steel_kg * 0.0015, max(0.0, fe_oxid * dt))
         oxide_gen = fe_oxid_m * 1.29
 
-        # Scrap/DRI melt from available net heat.
-        q_need_scrap = cfg.cp_scrap_j_kgk * (cfg.steel_melt_temp_c - cfg.scrap_temp_c) + cfg.latent_heat_steel_j_kg
+        # Split scrap heating into preheating and phase-change sinks.
+        scrap_preheat_target_c = cfg.steel_melt_temp_c - 40.0
+        q_preheat_per_kg = cfg.cp_scrap_j_kgk * max(0.0, scrap_preheat_target_c - cfg.scrap_temp_c)
+        q_latent_per_kg = cfg.latent_heat_steel_j_kg
         if cfg.initial_dri_fraction > 0:
-            q_need_scrap += cfg.initial_dri_fraction * cfg.dri_extra_heat_j_kg
+            q_latent_per_kg += cfg.initial_dri_fraction * cfg.dri_extra_heat_j_kg
 
         # Coupled losses (wall + radiation, reduced by foamy slag for model C)
         t_internal_k = celsius_to_kelvin(0.65 * state.steel_temp_c + 0.35 * state.slag_temp_c)
@@ -699,8 +714,10 @@ class FirstPrinciplesModel(BaseEAFModel):
         q_offgas_sens = offgas_mass_flow * cfg.cp_offgas_j_kgk * max(0.0, t_gas_k - t_amb_k) * dt * 0.16
 
         q_arc_and_chem = q_elec_useful + q_burner + q_rxn_steel
-        q_available_for_melting = max(0.0, q_arc_and_chem - 0.30 * q_heat_loss)
-        max_melt_energy = q_available_for_melting / max(q_need_scrap, EPS)
+        q_available_for_preheat = max(0.0, 0.35 * q_arc_and_chem)
+        q_available_for_melting = max(0.0, 0.45 * q_arc_and_chem - 0.20 * q_heat_loss)
+        max_preheat_mass = q_available_for_preheat / max(q_preheat_per_kg, EPS)
+        max_melt_energy = q_available_for_melting / max(q_latent_per_kg, EPS)
 
         kinetic_limiter = (
             2.4 * inputs["power_mw"]
@@ -711,9 +728,15 @@ class FirstPrinciplesModel(BaseEAFModel):
             kinetic_limiter *= 1.0 + 0.10 * foamy
             kinetic_limiter *= 1.0 - 0.12 * cfg.initial_dri_fraction
 
-        melt_rate = min(state.solid_scrap_kg / dt, kinetic_limiter, max_melt_energy / dt)
+        melt_rate = min(
+            state.solid_scrap_kg / dt,
+            kinetic_limiter,
+            max_melt_energy / dt,
+            max_preheat_mass / dt,
+        )
         melt_mass = max(0.0, melt_rate * dt)
-        q_melting = melt_mass * q_need_scrap
+        q_melting = melt_mass * q_latent_per_kg
+        q_scrap_preheat = melt_mass * q_preheat_per_kg
 
         # Steel + slag thermal coupling
         q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_c - state.steel_temp_c) * dt
@@ -729,9 +752,10 @@ class FirstPrinciplesModel(BaseEAFModel):
             + q_rxn_steel
             + q_slag_to_bath
             + q_corr
+            - q_scrap_preheat
             - q_melting
-            - 0.62 * q_heat_loss
-            - 0.45 * q_offgas_sens
+            - 0.40 * q_heat_loss
+            - 0.25 * q_offgas_sens
         )
         dT_steel = q_steel_net / steel_heat_cap
 
