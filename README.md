@@ -32,9 +32,10 @@ docker compose up --build full-run
 - Added unit tests and project docs.
 
 ## Outputs
-- Time series CSV per scenario and model.
-- Summary CSV + JSON with upgraded KPIs.
-- PNG trend plots.
+- Time series CSV per scenario and model are generated automatically by `docker compose up --build full-run` (or `python -m eaf_twin.cli run --config configs/base_case.json --output-dir outputs`).
+- Summary CSV + JSON with upgraded KPIs are generated automatically in `outputs/`.
+- PNG trend plots are generated automatically in `outputs/`.
+- Generated files under `outputs/` are runtime artifacts and are not meant to be committed.
 
 ## Tests
 ```bash
