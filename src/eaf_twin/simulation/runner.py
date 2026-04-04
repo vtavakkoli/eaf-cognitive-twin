@@ -9,6 +9,7 @@ from eaf_twin.config.loader import save_config
 from eaf_twin.io.persistence import save_summary_table, save_time_series
 from eaf_twin.models.empirical import EmpiricalModel
 from eaf_twin.models.first_principles import FirstPrinciplesModel
+from eaf_twin.reporting.html import write_result_html
 from eaf_twin.reporting.plots import plot_core
 from eaf_twin.validation.checks import plausibility_checks
 from eaf_twin.validation.metrics import model_status
@@ -17,20 +18,27 @@ from eaf_twin.validation.metrics import model_status
 def run_full_simulation(config, output_dir: Path) -> pd.DataFrame:
     output_dir.mkdir(parents=True, exist_ok=True)
     save_config(output_dir / "resolved_config.json", config)
+
+    scenarios = scenario_configs(config)
     rows = []
-    for scen_name, scen_cfg in scenario_configs(config).items():
+    for scen_name, scen_cfg in scenarios.items():
         scen_cfg.heat_name = scen_name
         for model in (EmpiricalModel(scen_cfg), FirstPrinciplesModel(scen_cfg, False), FirstPrinciplesModel(scen_cfg, True)):
             result = model.simulate()
             issues = plausibility_checks(result.summary)
             save_time_series(result.df, output_dir, f"timeseries_{scen_name}_{result.model_name}.csv")
-            plot_core(result.df, output_dir, f"{scen_name}_{result.model_name}")
-            rows.append({
-                "scenario": scen_name,
-                "model": result.model_name,
-                **result.summary,
-                "model_status": model_status(issues),
-                "issues": " | ".join(issues),
-            })
+            plot_core(result.df, output_dir, scen_name, result.model_name)
+            rows.append(
+                {
+                    "scenario": scen_name,
+                    "model": result.model_name,
+                    **result.summary,
+                    "model_status": model_status(issues),
+                    "issues": " | ".join(issues),
+                }
+            )
+
     save_summary_table(rows, output_dir, "all_scenarios")
+    model_names = ["Model_A_empirical", "Model_B_first_principles", "Model_C_enhanced_hybrid"]
+    write_result_html(output_dir, rows, list(scenarios.keys()), model_names)
     return pd.DataFrame(rows)

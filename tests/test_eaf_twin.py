@@ -145,6 +145,8 @@ class TestScenarioAndOutputs(unittest.TestCase):
             self.assertTrue((out / "summary_all_scenarios.csv").exists())
             ts = out / f"timeseries_base_case_Model_A_empirical.csv"
             self.assertTrue(ts.exists())
+            expected_plot = out / "plot_base_case_temperatures_Model_A_empirical.png"
+            self.assertTrue(expected_plot.exists())
             save_time_series(df, out, "tmp.csv")
             save_summary_table(df.to_dict(orient="records"), out, "tmp")
 
