@@ -14,6 +14,7 @@ class EmpiricalModel(BaseEAFModel):
 
         def step(state, inputs, warnings):
             dt = cfg.dt_s
+            state.steel_temp_k = state.liquid_steel_temp_k
             stg = stage_name(state.time_s / SECONDS_PER_MIN, state.melted_fraction)
             power_w = inputs["power_mw"] * 1e6
             q_elec = power_w * dt
@@ -43,6 +44,11 @@ class EmpiricalModel(BaseEAFModel):
             heat_cap = max(cfg.cp_steel_j_kgk * max(state.liquid_steel_kg, 10_000.0), 1e-9)
             d_t = (q_avail - q_melt) / heat_cap
             state.steel_temp_k += d_t
+            state.liquid_steel_temp_k = state.steel_temp_k
+            if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
+                state.solid_scrap_temp_k = min(cfg.steel_melt_temp_k, state.solid_scrap_temp_k + 0.4 * d_t)
+            else:
+                state.solid_scrap_temp_k = cfg.steel_melt_temp_k
             state.slag_temp_k += 0.35 * d_t
             state.offgas_temp_k = clamp(cfg.ambient_temp_k + 0.1 * (state.steel_temp_k - cfg.ambient_temp_k), cfg.ambient_temp_k, cfg.max_offgas_temp_k)
             state.slag_kg += inputs["flux_kg_min"] / 60.0 * dt * cfg.flux_to_slag_factor

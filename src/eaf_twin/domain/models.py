@@ -44,7 +44,7 @@ class FurnaceConfig:
     initial_steel_temp_c: float = 23.0
     initial_slag_temp_c: float = 23.0
     initial_offgas_temp_c: float = 23.0
-    initial_hot_heel_kg: float = 0.0
+    initial_hot_heel_kg: float = 8_000.0
     initial_hot_heel_temp_c: float = 1600.0
     tap_target_temp_c: float = 1645.0
 
@@ -137,6 +137,8 @@ class FurnaceState:
     offgas_temp_k: float
     steel_carbon_kg: float
     feo_slag_kg: float
+    solid_scrap_temp_k: float
+    liquid_steel_temp_k: float
 
     cum_electric_j: float = 0.0
     cum_chemical_j: float = 0.0

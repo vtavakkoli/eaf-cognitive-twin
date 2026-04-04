@@ -41,11 +41,13 @@ class BaseEAFModel:
             solid_dri_kg=first_dri,
             liquid_steel_kg=self.config.initial_hot_heel_kg,
             slag_kg=self.config.initial_slag_kg,
-            steel_temp_k=self.config.initial_steel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.ambient_temp_k,
+            steel_temp_k=self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.ambient_temp_k,
             slag_temp_k=self.config.initial_slag_temp_c + 273.15 if self.config.initial_slag_kg > 0 else self.config.ambient_temp_k,
             offgas_temp_k=self.config.initial_offgas_temp_c + 273.15,
             steel_carbon_kg=0.006 * max(self.config.initial_hot_heel_kg, 1.0),
             feo_slag_kg=350.0,
+            solid_scrap_temp_k=self.config.scrap_temp_k,
+            liquid_steel_temp_k=self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.scrap_temp_k,
         )
 
     def apply_charge_events(self, state: FurnaceState, t_prev_s: float, t_now_s: float) -> None:
@@ -54,9 +56,16 @@ class BaseEAFModel:
             if t_prev_min < ev.time_min <= t_now_min:
                 state.solid_scrap_kg += ev.scrap_kg
                 state.solid_dri_kg += ev.dri_kg
-                shock_k = 10.0 + 0.00008 * (ev.scrap_kg + ev.dri_kg)
-                state.steel_temp_k -= shock_k
-                state.slag_temp_k -= 0.8 * shock_k
+                added_mass = ev.scrap_kg + ev.dri_kg
+                if added_mass > 0:
+                    old_solid = max(state.solid_scrap_kg + state.solid_dri_kg - added_mass, 0.0)
+                    state.solid_scrap_temp_k = (
+                        old_solid * state.solid_scrap_temp_k + added_mass * self.config.scrap_temp_k
+                    ) / max(old_solid + added_mass, 1e-9)
+                    heel_ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
+                    state.liquid_steel_temp_k -= clamp(40.0 * heel_ratio, 4.0, 35.0)
+                    state.steel_temp_k = state.liquid_steel_temp_k
+                    state.slag_temp_k -= clamp(8.0 * heel_ratio, 1.0, 7.0)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_k, self.config.max_temp_k))
@@ -71,9 +80,13 @@ class BaseEAFModel:
             "cum_tapped_kg": state.cum_tapped_kg,
             "slag_kg": state.slag_kg,
             "steel_temp_k": state.steel_temp_k,
+            "solid_scrap_temp_k": state.solid_scrap_temp_k,
+            "liquid_steel_temp_k": state.liquid_steel_temp_k,
             "slag_temp_k": state.slag_temp_k,
             "offgas_temp_k": state.offgas_temp_k,
             "steel_temp_c": state.steel_temp_k - 273.15,
+            "solid_scrap_temp_c": state.solid_scrap_temp_k - 273.15,
+            "liquid_steel_temp_c": state.liquid_steel_temp_k - 273.15,
             "slag_temp_c": state.slag_temp_k - 273.15,
             "offgas_temp_c": state.offgas_temp_k - 273.15,
             "melted_fraction": state.melted_fraction,
