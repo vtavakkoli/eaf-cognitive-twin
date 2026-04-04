@@ -24,10 +24,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Static checks
-        run: |
-          python -m py_compile eaf_simulator.py tests/test_eaf_simulator.py
-
       - name: Unit tests
         run: |
           python -m unittest discover -s tests -v
