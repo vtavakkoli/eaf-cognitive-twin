@@ -101,12 +101,15 @@ class FirstPrinciplesModel(BaseEAFModel):
             
             q_melt = 0.0 
             
+            safe_melt_temp = cfg.steel_melt_temp_c if getattr(cfg, 'steel_melt_temp_c', 0) > 0 else 1530.0
+
             # Step 4b: If pool exceeds melting point, excess heat flows into solid scrap to melt it
-            if state.steel_temp_c > cfg.steel_melt_temp_c:
-                excess_energy_j = (state.steel_temp_c - cfg.steel_melt_temp_c) * steel_cap
+            if state.steel_temp_c > safe_melt_temp:
+                # REPLACE cfg.steel_melt_temp_c with safe_melt_temp in this block
+                excess_energy_j = (state.steel_temp_c - safe_melt_temp) * steel_cap
                 
                 # To melt scrap, we must first heat it to the melting point (Sensible Heat) + melt it (Latent Heat)
-                h_sensible_scrap = cfg.cp_scrap_j_kgk * max(0.0, cfg.steel_melt_temp_c - cfg.scrap_temp_c)
+                h_sensible_scrap = cfg.cp_scrap_j_kgk * max(0.0, safe_melt_temp - cfg.scrap_temp_c)
                 h_melt_scrap = h_sensible_scrap + cfg.latent_heat_steel_j_kg
 
                 # Melt solid scrap
