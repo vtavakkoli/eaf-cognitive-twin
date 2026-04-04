@@ -39,13 +39,14 @@ class BaseEAFModel:
             time_s=0.0,
             solid_scrap_kg=first_scrap,
             solid_dri_kg=first_dri,
-            liquid_steel_kg=8_000.0,
+            liquid_steel_kg=max(self.config.initial_hot_heel_kg, 8_000.0),
             slag_kg=self.config.initial_slag_kg,
-            steel_temp_c=self.config.initial_steel_temp_c,
+            steel_temp_c=self.config.initial_hot_heel_temp_c if self.config.initial_hot_heel_kg > 0 else self.config.initial_steel_temp_c,
             slag_temp_c=self.config.initial_slag_temp_c,
             offgas_temp_c=self.config.initial_offgas_temp_c,
-            steel_carbon_kg=0.006 * 8_000.0,
+            steel_carbon_kg=0.006 * max(self.config.initial_hot_heel_kg, 8_000.0),
             feo_slag_kg=350.0,
+            solid_scrap_temp_c=self.config.scrap_temp_c,
         )
 
     def apply_charge_events(self, state: FurnaceState, t_prev_s: float, t_now_s: float) -> None:
