@@ -81,7 +81,7 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - t_amb_k) * dt
             q_rad = cfg.radiation_loss_factor * (1.0 - cfg.foamy_slag_loss_reduction * foam) * SIGMA * cfg.area_effective_m2 * (t_int_k**4 - t_amb_k**4) * dt
             offgas_flow = 1.25 * o2_flow + 0.78 * ng_flow + 0.4 * c_flow + 2.0
-            q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - t_amb_k) * dt * 0.16
+            q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - t_amb_k) * dt * 0.12
             q_losses = max(0.0, q_wall + max(0.0, q_rad) + q_offgas)
 
             q_arc_to_metal = q_arc_useful * (0.90 if not self.enhanced else 0.92)
@@ -94,10 +94,19 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_chem_to_slag = 0.16 * (q_oxy + q_c)
             q_chem_to_gas = 0.14 * (q_oxy + q_c)
 
+            stage_direct_solid_splits = {
+                "bore_in": (0.40, 0.20, 0.24),
+                "main_melting": (0.25, 0.12, 0.20),
+                "refining": (0.06, 0.04, 0.08),
+                "superheat": (0.00, 0.00, 0.03),
+                "tapping": (0.00, 0.00, 0.02),
+            }
+            f_stage_arc, f_stage_burn, f_stage_gas = stage_direct_solid_splits.get(stg, (0.0, 0.0, 0.0))
+
             q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
-            q_liquid_net = q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + q_slag_to_bath - (0.14 if not self.enhanced else 0.12) * q_losses
-            q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - 0.25 * q_losses
-            q_gas_net = q_arc_to_gas + q_burn_to_gas + q_chem_to_gas + 0.15 * q_losses - q_offgas
+            q_liquid_net = q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + q_slag_to_bath - (0.10 if not self.enhanced else 0.09) * q_losses
+            q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - 0.20 * q_losses
+            q_gas_net = q_arc_to_gas + q_burn_to_gas + q_chem_to_gas + 0.12 * q_losses - q_offgas
 
             melt_scrap = 0.0
             melt_dri = 0.0
@@ -112,21 +121,30 @@ class FirstPrinciplesModel(BaseEAFModel):
             h_melt_end = h_melt_start + latent_heat_steel_j_kg()
             h_solid = cp_solid * (state.solid_scrap_temp_k - cfg.ambient_temp_k)
             q_solid_from_bath = 0.0
+            q_arc_to_solid = 0.0
+            q_burn_to_solid = 0.0
+            q_gas_to_solid = 0.0
+            q_solid_total = 0.0
             if solid_mass > 1e-6:
+                q_arc_to_solid = f_stage_arc * q_arc_useful
+                q_burn_to_solid = f_stage_burn * q_burn
+                q_gas_to_solid = f_stage_gas * max(0.0, q_gas_net)
                 q_solid_from_bath = (12_500.0 if not self.enhanced else 14_000.0) * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
                 q_solid_from_bath = max(0.0, min(q_solid_from_bath, max(0.0, q_liquid_net + 0.18 * q_losses)))
+                q_solid_total = q_arc_to_solid + q_burn_to_solid + q_gas_to_solid + q_solid_from_bath
+                q_liquid_net -= q_arc_to_solid + q_burn_to_solid
 
             region = "liquid_superheat"
             if solid_mass > 1e-6 and h_solid < h_melt_start:
                 region = "solid_heating"
-                state.solid_scrap_temp_k += q_solid_from_bath / max(solid_mass * cp_solid, 1e-9)
+                state.solid_scrap_temp_k += q_solid_total / max(solid_mass * cp_solid, 1e-9)
                 q_liquid_net -= q_solid_from_bath
                 state.liquid_steel_temp_k += q_liquid_net / max(max(state.liquid_steel_kg, 8_000.0) * cp_liquid, 1e-9)
             elif solid_mass > 1e-6 and h_solid <= h_melt_end:
                 region = "phase_change"
                 q_need_scrap = latent_heat_steel_j_kg()
                 q_need_dri = latent_heat_steel_j_kg() + cfg.dri_reduction_endotherm_j_kg
-                q_for_melt = max(0.0, q_solid_from_bath + 0.20 * max(0.0, q_liquid_net))
+                q_for_melt = max(0.0, q_solid_total + 0.08 * max(0.0, q_liquid_net))
                 melt_scrap = min(state.solid_scrap_kg, q_for_melt / max(q_need_scrap, 1e-9))
                 q_for_melt -= melt_scrap * q_need_scrap
                 melt_dri = min(state.solid_dri_kg, q_for_melt / max(q_need_dri, 1e-9))
@@ -184,6 +202,8 @@ class FirstPrinciplesModel(BaseEAFModel):
                 "q_useful_mw": (q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + max(0.0, q_slag_to_bath)) / dt / 1e6,
                 "q_melt_mw": q_melt / dt / 1e6,
                 "q_loss_mw": q_losses / dt / 1e6,
+                "q_solid_direct_mw": (q_arc_to_solid + q_burn_to_solid + q_gas_to_solid) / dt / 1e6,
+                "q_solid_total_mw": q_solid_total / dt / 1e6,
                 "melt_rate_kg_s": melt_rate_kg_s,
                 "phase_region": region,
                 "h_steel_sensible_mj": sensible_heat_liquid_steel_j_kg(cfg.ambient_temp_k, state.liquid_steel_temp_k) * state.liquid_steel_kg / 1e6,
