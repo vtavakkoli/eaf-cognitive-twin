@@ -509,7 +509,7 @@ class EmpiricalModel(BaseEAFModel):
             inputs = active_setpoints(cfg, t_min)
             stg = stage_name(t_min, state.melted_fraction)
 
-            self.apply_charge_events(state, state.time_s - cfg.dt_s, state.time_s)
+            self.apply_charge_events(state, max(0.0, state.time_s - cfg.dt_s), state.time_s)
             dt = cfg.dt_s
 
             power_w = inputs["power_mw"] * 1e6

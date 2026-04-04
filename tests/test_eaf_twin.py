@@ -79,6 +79,35 @@ class TestPhysicsAndKPIs(unittest.TestCase):
         cols = ["solid_scrap_kg", "solid_dri_kg", "liquid_steel_kg", "slag_kg"]
         self.assertTrue((res.df[cols] >= -1e-9).all().all())
 
+    def test_no_melting_when_below_melt_condition(self):
+        cfg = self._short_cfg()
+        cfg.heat_duration_min = 2
+        cfg.initial_hot_heel_kg = 0.0
+        cfg.initial_steel_temp_c = 50.0
+        cfg.initial_scrap_kg = 20_000.0
+        cfg.charge_events = [ChargeEvent(0.0, scrap_kg=20_000.0, dri_kg=0.0)]
+        cfg.stage_windows = [StageWindow(0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+        res = FirstPrinciplesModel(cfg, enhanced=False).simulate()
+        self.assertTrue((res.df["phase_region"] == "solid_heating").all())
+        self.assertTrue((res.df["melt_rate_kg_s"] == 0.0).all())
+        self.assertAlmostEqual(float(res.df["solid_scrap_kg"].iloc[-1]), float(res.df["solid_scrap_kg"].iloc[0]), places=6)
+
+    def test_phase_and_superheat_are_state_conditional(self):
+        cfg = self._short_cfg()
+        cfg.heat_duration_min = 6
+        cfg.initial_hot_heel_kg = 30_000.0
+        cfg.initial_steel_temp_c = cfg.steel_melt_temp_c
+        cfg.initial_scrap_kg = 3_000.0
+        cfg.charge_events = [ChargeEvent(0.0, scrap_kg=3_000.0, dri_kg=0.0)]
+        cfg.stage_windows = [StageWindow(0.0, 6.0, 200.0, 0.0, 0.0, 0.0, 0.0)]
+        res = FirstPrinciplesModel(cfg, enhanced=False).simulate()
+        phase_rows = res.df[res.df["phase_region"] == "phase_change"]
+        self.assertGreater(len(phase_rows), 0)
+        self.assertTrue((phase_rows["melt_rate_kg_s"] > 0).any())
+        superheat_rows = res.df[res.df["phase_region"] == "liquid_superheat"]
+        self.assertGreater(len(superheat_rows), 0)
+        self.assertTrue((superheat_rows["solid_scrap_kg"] <= 1e-6).all())
+
 
 class TestScenarioAndOutputs(unittest.TestCase):
     def test_scenario_generation(self):
