@@ -880,11 +880,10 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     """Create required PNG plots for a single model run."""
     df = result.df
     t = df["time_min"]
-    prefix = f"{result.scenario_name}_{result.model_name}"
     paths: List[Path] = []
 
     def save(fig_name: str) -> Path:
-        path = out_dir / f"plot_{prefix}_{fig_name}.png"
+        path = out_dir / f"plot_{result.scenario_name}_{fig_name}_{result.model_name}.png"
         plt.tight_layout()
         plt.savefig(path, dpi=140)
         plt.close()
@@ -896,7 +895,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     plt.plot(t, df["offgas_temp_c"], label="Off-gas")
     plt.xlabel("Time [min]")
     plt.ylabel("Temperature [°C]")
-    plt.title(f"Temperature trajectories ({prefix})")
+    plt.title(f"Temperature trajectories ({result.scenario_name} | {result.model_name})")
     plt.grid(True, alpha=0.3)
     plt.legend()
     paths.append(save("temperatures"))
@@ -905,7 +904,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     plt.plot(t, df["melted_fraction"], color="tab:purple")
     plt.xlabel("Time [min]")
     plt.ylabel("Melted fraction [-]")
-    plt.title(f"Melted fraction ({prefix})")
+    plt.title(f"Melted fraction ({result.scenario_name} | {result.model_name})")
     plt.grid(True, alpha=0.3)
     paths.append(save("melted_fraction"))
 
@@ -914,7 +913,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     plt.plot(t, df["liquid_steel_kg"], label="Liquid steel")
     plt.xlabel("Time [min]")
     plt.ylabel("Mass [kg]")
-    plt.title(f"Metal phase masses ({prefix})")
+    plt.title(f"Metal phase masses ({result.scenario_name} | {result.model_name})")
     plt.grid(True, alpha=0.3)
     plt.legend()
     paths.append(save("metal_masses"))
@@ -924,7 +923,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     plt.plot(t, df["cum_chemical_gj"] / 3.6, label="Chemical [MWh eq]")
     plt.xlabel("Time [min]")
     plt.ylabel("Cumulative energy [MWh]")
-    plt.title(f"Cumulative energies ({prefix})")
+    plt.title(f"Cumulative energies ({result.scenario_name} | {result.model_name})")
     plt.grid(True, alpha=0.3)
     plt.legend()
     paths.append(save("cumulative_energy"))
@@ -935,7 +934,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     plt.plot(t, df["cum_carbon_kg"], label="Carbon [kg]")
     plt.xlabel("Time [min]")
     plt.ylabel("Cumulative consumption")
-    plt.title(f"Cumulative consumables ({prefix})")
+    plt.title(f"Cumulative consumables ({result.scenario_name} | {result.model_name})")
     plt.grid(True, alpha=0.3)
     plt.legend()
     paths.append(save("consumables"))
@@ -944,7 +943,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     plt.plot(t, df["steel_carbon_wt_pct"], color="tab:brown")
     plt.xlabel("Time [min]")
     plt.ylabel("Steel carbon [wt%]")
-    plt.title(f"Carbon trajectory ({prefix})")
+    plt.title(f"Carbon trajectory ({result.scenario_name} | {result.model_name})")
     plt.grid(True, alpha=0.3)
     paths.append(save("steel_carbon"))
 
@@ -959,7 +958,7 @@ def plot_model_outputs(result: ModelResult, out_dir: Path) -> List[Path]:
     )
     plt.xlabel("Time [min]")
     plt.ylabel("Power [MW]")
-    plt.title(f"Heat flow stack ({prefix})")
+    plt.title(f"Heat flow stack ({result.scenario_name} | {result.model_name})")
     plt.legend(loc="upper right")
     plt.grid(True, alpha=0.3)
     paths.append(save("heat_stack"))
@@ -1061,10 +1060,12 @@ def write_result_html(
 
         plot_blocks = []
         for scen in scenarios:
-            prefix = f"{scen}_{model_name}"
-            ts_name = f"timeseries_{prefix}.csv"
-            image_glob = sorted(output_dir.glob(f"plot_{prefix}_*.png"))
-            images_html = "".join(f'<img src="{p.name}" alt="{p.name}" loading="lazy"/>' for p in image_glob)
+            ts_name = f"timeseries_{scen}_{model_name}.csv"
+            image_glob = sorted(output_dir.glob(f"plot_{scen}_*_{model_name}.png"))
+            images_html = "".join(
+                f'<figure><img src="{p.name}" alt="{p.name}" loading="lazy"/><figcaption>{p.name}</figcaption></figure>'
+                for p in image_glob
+            )
             plot_blocks.append(
                 f"""
                 <div class="scenario-block">
@@ -1107,7 +1108,9 @@ def write_result_html(
     .summary-table th, .summary-table td {{ border: 1px solid #ccc; padding: 6px; font-size: 13px; }}
     .scenario-block {{ margin: 16px 0 26px; }}
     .plot-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }}
+    .plot-grid figure {{ margin: 0; }}
     .plot-grid img {{ width: 100%; border: 1px solid #ddd; border-radius: 4px; }}
+    .plot-grid figcaption {{ font-size: 12px; color: #444; padding-top: 4px; word-break: break-word; }}
   </style>
 </head>
 <body>
