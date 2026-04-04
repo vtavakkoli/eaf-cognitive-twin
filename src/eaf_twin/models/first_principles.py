@@ -83,7 +83,7 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - t_amb_k) * dt * 0.16
             q_losses = max(0.0, q_wall + max(0.0, q_rad) + q_offgas)
 
-            q_arc_to_metal = q_arc_useful * (0.88 if not self.enhanced else 0.84)
+            q_arc_to_metal = q_arc_useful * (0.88 if not self.enhanced else 0.90)
             q_arc_to_slag = q_arc_useful * 0.10
             q_arc_to_gas = q_arc_useful - q_arc_to_metal - q_arc_to_slag
             q_burn_to_metal = q_burn * (0.50 if not self.enhanced else 0.54)
@@ -94,7 +94,7 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_chem_to_gas = 0.14 * (q_oxy + q_c)
 
             q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_k - state.steel_temp_k) * dt
-            q_metal_net = q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + q_slag_to_bath - 0.2 * q_losses
+            q_metal_net = q_arc_to_metal + q_burn_to_metal + q_chem_to_metal + q_slag_to_bath - (0.2 if not self.enhanced else 0.16) * q_losses
             q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - 0.25 * q_losses
             q_gas_net = q_arc_to_gas + q_burn_to_gas + q_chem_to_gas + 0.15 * q_losses - q_offgas
 

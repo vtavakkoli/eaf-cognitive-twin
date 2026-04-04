@@ -144,7 +144,12 @@ class BaseEAFModel:
 def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
     dt = cfg.dt_s
     ready_by_melt = state.melted_fraction >= 0.98 and state.steel_temp_k >= cfg.tap_target_temp_k
-    ready_by_time = (state.time_s / SECONDS_PER_MIN) >= 55.0 and state.liquid_steel_kg >= 0.92 * cfg.tap_target_steel_kg
+    ready_by_time = (
+        (state.time_s / SECONDS_PER_MIN) >= 55.0
+        and state.liquid_steel_kg >= 0.92 * cfg.tap_target_steel_kg
+        and state.melted_fraction >= 0.95
+        and state.steel_temp_k >= cfg.steel_melt_temp_k
+    )
     if ready_by_melt or ready_by_time:
         state.tapping_started = True
         if state.tap_start_time_s is None:
