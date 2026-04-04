@@ -12,10 +12,6 @@ pip install -e .
 python -m eaf_twin.cli run --config configs/base_case.json --output-dir outputs
 ```
 
-Backward-compatible command:
-```bash
-python eaf_simulator.py --config configs/base_case.json --output-dir outputs
-```
 
 ## Docker
 ```bash
