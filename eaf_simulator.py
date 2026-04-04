@@ -1038,25 +1038,29 @@ def write_result_html(
         "Model_C_enhanced_hybrid": "Model C",
     }
 
+    keep_cols = [
+        "scenario",
+        "model",
+        "status",
+        "tap_temp_c",
+        "melted_fraction",
+        "tap_steel_kg",
+        "electric_kwh_t",
+        "oxygen_nm3_t",
+        "ng_nm3_t",
+        "issues",
+    ]
+
+    def render_table(subset: pd.DataFrame, table_class: str = "summary-table") -> str:
+        if subset.empty:
+            return "<p>No rows available.</p>"
+        available_cols = [c for c in keep_cols if c in subset.columns]
+        return subset[available_cols].round(3).to_html(index=False, classes=table_class, border=0)
+
     def model_section(model_name: str) -> str:
         label = model_labels.get(model_name, model_name)
         subset = summary_df[summary_df["model"] == model_name].copy()
-        if subset.empty:
-            table_html = "<p>No rows available.</p>"
-        else:
-            keep_cols = [
-                "scenario",
-                "status",
-                "tap_temp_c",
-                "melted_fraction",
-                "tap_steel_kg",
-                "electric_kwh_t",
-                "oxygen_nm3_t",
-                "ng_nm3_t",
-                "issues",
-            ]
-            available_cols = [c for c in keep_cols if c in subset.columns]
-            table_html = subset[available_cols].round(3).to_html(index=False, classes="summary-table", border=0)
+        table_html = render_table(subset.drop(columns=["model"], errors="ignore"))
 
         plot_blocks = []
         for scen in scenarios:
@@ -1091,6 +1095,16 @@ def write_result_html(
         for i, m in enumerate(model_names)
     )
     panels = "".join(model_section(m) for m in model_names)
+    overall_table = render_table(summary_df.copy())
+    results_links = [
+        "summary_all_scenarios.csv",
+        "sensitivity_table.csv",
+        "plot_compare_models_base_case.png",
+        "plot_sensitivity_ranking.png",
+    ]
+    links_html = "".join(
+        f'<li><a href="{name}">{name}</a></li>' for name in results_links if (output_dir / name).exists()
+    )
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1116,6 +1130,13 @@ def write_result_html(
 <body>
   <h1>EAF Simulation Results</h1>
   <p>Generated report includes Model A / Model B / Model C tabs with tables and plots.</p>
+  <h2>All-model summary</h2>
+  {overall_table}
+  <h3>Result files</h3>
+  <ul>
+    <li><a href="result.html">result.html</a></li>
+    {links_html}
+  </ul>
   <div class="tabs">{tabs}</div>
   {panels}
   <script>
