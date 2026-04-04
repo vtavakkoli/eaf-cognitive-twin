@@ -22,6 +22,7 @@ class FirstPrinciplesModel(BaseEAFModel):
 
         def step(state, inputs, warnings):
             dt = cfg.dt_s
+            print("dt value", dt)
             
             # Safety check to avoid division by zero errors before pool forms
             total_metal = state.solid_scrap_kg + state.solid_dri_kg + state.liquid_steel_kg
