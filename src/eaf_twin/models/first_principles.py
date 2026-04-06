@@ -77,72 +77,75 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt
             q_rad = cfg.radiation_loss_factor * (1.0 - cfg.foamy_slag_loss_reduction * foam) * SIGMA * cfg.area_effective_m2 * (t_int_k**4 - cfg.ambient_temp_k**4) * dt
             
-            # Gas Temperature (First order lag correctly limits runaway to 2200C)
+            offgas_flow = 1.25 * o2_flow + 0.78 * ng_flow + 0.4 * c_flow + 2.0
+            
             target_gas_k = cfg.ambient_temp_k + 300.0 + 1200.0 * (power_w / 80e6) + 800.0 * (q_chem / max(dt, 1e-9) / 20e6)
             state.offgas_temp_k += (target_gas_k - state.offgas_temp_k) * (dt / 15.0)
             state.offgas_temp_k = clamp(state.offgas_temp_k, cfg.ambient_temp_k, cfg.max_offgas_temp_k)
             
-            offgas_flow = 1.25 * o2_flow + 0.78 * ng_flow + 0.4 * c_flow + 2.0
-            q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * (state.offgas_temp_k - cfg.ambient_temp_k) * dt
+            q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * (state.offgas_temp_k - cfg.ambient_temp_k) * dt 
             q_losses = q_wall + q_rad + q_offgas
 
-            # Distribute Heat based on Melt Fraction (Shielding effect)
-            f_melt = state.melted_fraction
-            
-            q_arc_to_slag = q_arc_useful * (0.12 if not self.enhanced else 0.10)
-            q_arc_to_metal = q_arc_useful - q_arc_to_slag
-            
-            q_arc_to_liquid = q_arc_to_metal * (f_melt ** 1.5)
-            q_arc_to_solid = q_arc_to_metal - q_arc_to_liquid
-            
-            q_burn_to_slag = q_burn * 0.20
-            q_burn_to_metal = q_burn - q_burn_to_slag
-            q_burn_to_liquid = q_burn_to_metal * f_melt
-            q_burn_to_solid = q_burn_to_metal - q_burn_to_liquid
-            
-            q_chem_to_slag = (q_oxy + q_c) * 0.25
-            q_chem_to_liquid = (q_oxy + q_c) - q_chem_to_slag
-
-            # Slag dynamics
-            q_slag_to_bath = 25000.0 * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
-            q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - 0.15 * q_losses
-            state.slag_temp_k += q_slag_net / max(state.slag_kg * cfg.cp_slag_j_kgk, 1e-9)
-
-            # Solid & Liquid dynamics
-            q_liquid_net = q_arc_to_liquid + q_burn_to_liquid + q_chem_to_liquid + q_slag_to_bath - 0.45 * q_losses
-            q_solid_net = q_arc_to_solid + q_burn_to_solid - 0.15 * q_losses
-
             solid_mass = state.solid_scrap_kg + state.solid_dri_kg
+            total_metal_mass = max(state.liquid_steel_kg + solid_mass, 1.0)
+            
+            solid_fraction = solid_mass / total_metal_mass
+            direct_solid_fraction = solid_fraction ** 0.5  
+            
+            q_arc_to_metal = q_arc_useful * (0.80 if not self.enhanced else 0.82)
+            q_arc_to_slag = q_arc_useful * (0.15 if not self.enhanced else 0.13)
+            
+            q_arc_to_solid = q_arc_to_metal * direct_solid_fraction
+            q_arc_to_liquid = q_arc_to_metal * (1.0 - direct_solid_fraction)
+            
+            q_burn_to_metal = q_burn * (0.55 if not self.enhanced else 0.58)
+            q_burn_to_solid = q_burn_to_metal * direct_solid_fraction
+            q_burn_to_liquid = q_burn_to_metal * (1.0 - direct_solid_fraction)
+            q_burn_to_slag = q_burn * 0.20
+            
+            q_chem_to_liquid = 0.60 * (q_oxy + q_c)
+            q_chem_to_slag = 0.30 * (q_oxy + q_c)
+
+            q_slag_to_bath = 14000.0 * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
+            
+            q_liquid_net = q_arc_to_liquid + q_burn_to_liquid + q_chem_to_liquid + q_slag_to_bath - 0.20 * q_losses
+            q_solid_net = q_arc_to_solid + q_burn_to_solid
+            q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - 0.20 * q_losses
+
             cp_sol = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
             cp_liq = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
             
+            cap_sol = solid_mass * cp_sol
+            cap_liq = state.liquid_steel_kg * cp_liq
+
             melt_scrap = 0.0
             melt_dri = 0.0
             q_melt = 0.0
             region = "liquid_superheat"
 
             if solid_mass > 1e-6:
-                # Liquid transfers massive heat to solid if superheated
+                # Direct convection heating from liquid bath to solid scrap
                 q_convection = 0.0
                 if state.liquid_steel_temp_k > state.solid_scrap_temp_k:
-                    q_convection = 15000.0 * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
-                    q_convection = min(q_convection, 0.5 * state.liquid_steel_kg * cp_liq * (state.liquid_steel_temp_k - state.solid_scrap_temp_k))
+                    q_convection = 25000.0 * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
+                    # Liquid can't give more than it has
+                    q_convection = min(q_convection, 0.5 * cap_liq * (state.liquid_steel_temp_k - state.solid_scrap_temp_k))
                 
                 q_liquid_net -= q_convection
                 q_solid_net += q_convection
                 
-                state.solid_scrap_temp_k += q_solid_net / max(solid_mass * cp_sol, 1e-9)
+                state.solid_scrap_temp_k += q_solid_net / max(cap_sol, 1e-9)
                 
                 if state.solid_scrap_temp_k >= cfg.steel_melt_temp_k:
                     region = "phase_change"
-                    excess_j = (state.solid_scrap_temp_k - cfg.steel_melt_temp_k) * solid_mass * cp_sol
+                    excess_j = (state.solid_scrap_temp_k - cfg.steel_melt_temp_k) * cap_sol
                     state.solid_scrap_temp_k = cfg.steel_melt_temp_k
                     
-                    # Force liquid's excess heat into melting the solid
-                    if state.liquid_steel_temp_k > cfg.steel_melt_temp_k + 2.0:
-                        bath_excess_j = (state.liquid_steel_temp_k - cfg.steel_melt_temp_k) * state.liquid_steel_kg * cp_liq * 0.8
+                    # Liquid bath cannot superheat while scrap exists. Drain its heat perfectly into the solid!
+                    if state.liquid_steel_temp_k > cfg.steel_melt_temp_k + 0.5:
+                        bath_excess_j = (state.liquid_steel_temp_k - cfg.steel_melt_temp_k) * cap_liq * 0.9
                         excess_j += bath_excess_j
-                        state.liquid_steel_temp_k -= bath_excess_j / max(state.liquid_steel_kg * cp_liq, 1e-9)
+                        q_liquid_net -= bath_excess_j
                     
                     latent = cfg.latent_heat_steel_j_kg
                     melt_scrap = min(state.solid_scrap_kg, excess_j / latent)
@@ -155,8 +158,8 @@ class FirstPrinciplesModel(BaseEAFModel):
                     
                     new_liquid_kg = melt_scrap + melt_dri * cfg.dri_fe_metallization
                     if new_liquid_kg > 0:
-                        # Enthalpy transfer: Liquid perfectly mixes with incoming 1535C steel
                         total_liq = state.liquid_steel_kg + new_liquid_kg
+                        # Mixed enthalpy temperature
                         state.liquid_steel_temp_k = (state.liquid_steel_kg * state.liquid_steel_temp_k + new_liquid_kg * cfg.steel_melt_temp_k) / total_liq
                         
                         state.solid_scrap_kg -= melt_scrap
@@ -166,18 +169,20 @@ class FirstPrinciplesModel(BaseEAFModel):
                 else:
                     region = "solid_heating"
                     
-                state.liquid_steel_temp_k += q_liquid_net / max(state.liquid_steel_kg * cp_liq, 1e-9)
+                state.liquid_steel_temp_k += q_liquid_net / max(cap_liq, 1e-9)
             else:
                 region = "liquid_superheat"
                 state.solid_scrap_kg = 0.0
                 state.solid_dri_kg = 0.0
                 state.solid_scrap_temp_k = cfg.steel_melt_temp_k
-                # A minimum effective thermal mass prevents temperature crash when tapping drains the furnace
                 eff_cap_liq = max(state.liquid_steel_kg * cp_liq, 5000.0 * cp_liq)
                 state.liquid_steel_temp_k += q_liquid_net / eff_cap_liq
 
             state.slag_kg += flux_flow * dt * cfg.flux_to_slag_factor + oxide
-            
+
+            eff_cap_slag = max(state.slag_kg * cfg.cp_slag_j_kgk, 2000.0 * cfg.cp_slag_j_kgk)
+            state.slag_temp_k += q_slag_net / eff_cap_slag
+                
             state.solid_scrap_temp_k = max(state.solid_scrap_temp_k, cfg.ambient_temp_k)
             state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, cfg.ambient_temp_k)
             state.steel_temp_k = state.liquid_steel_temp_k
