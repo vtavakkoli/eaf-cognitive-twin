@@ -80,8 +80,10 @@ class FirstPrinciplesModel(BaseEAFModel):
             t_amb_k = cfg.ambient_temp_k
             q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - t_amb_k) * dt
             q_rad = cfg.radiation_loss_factor * (1.0 - cfg.foamy_slag_loss_reduction * foam) * SIGMA * cfg.area_effective_m2 * (t_int_k**4 - t_amb_k**4) * dt
+            
+            # Fix 1: Properly vent exhaust energy to fix 2200 C runaway (removed 0.16 artificial limit)
             offgas_flow = 1.25 * o2_flow + 0.78 * ng_flow + 0.4 * c_flow + 2.0
-            q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - t_amb_k) * dt * 0.16
+            q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - t_amb_k) * dt 
             q_losses = max(0.0, q_wall + max(0.0, q_rad) + q_offgas)
 
             solid_mass = state.solid_scrap_kg + state.solid_dri_kg
@@ -89,26 +91,29 @@ class FirstPrinciplesModel(BaseEAFModel):
             
             # Solid fraction for shielding (brings direct heating to the scrap dynamically)
             solid_fraction = solid_mass / total_metal_mass
-            direct_solid_fraction = solid_fraction ** 0.5  # Non-linear exposure modeling
+            direct_solid_fraction = solid_fraction ** 0.5  
             
-            q_arc_to_metal = q_arc_useful * (0.90 if not self.enhanced else 0.92)
+            # Fix 4: Force slag to run hotter than the steel bath by adjusting direct Arc & Chem input
+            q_arc_to_metal = q_arc_useful * (0.80 if not self.enhanced else 0.82)
+            q_arc_to_slag = q_arc_useful * (0.15 if not self.enhanced else 0.13)
+            q_arc_to_gas = q_arc_useful - q_arc_to_metal - q_arc_to_slag
+            
             q_arc_to_solid = q_arc_to_metal * direct_solid_fraction
             q_arc_to_liquid = q_arc_to_metal * (1.0 - direct_solid_fraction)
-            q_arc_to_slag = q_arc_useful * 0.10
-            q_arc_to_gas = q_arc_useful - q_arc_to_metal - q_arc_to_slag
             
             q_burn_to_metal = q_burn * (0.55 if not self.enhanced else 0.58)
             q_burn_to_solid = q_burn_to_metal * direct_solid_fraction
             q_burn_to_liquid = q_burn_to_metal * (1.0 - direct_solid_fraction)
-            q_burn_to_slag = q_burn * 0.18
+            q_burn_to_slag = q_burn * 0.20
             q_burn_to_gas = q_burn - q_burn_to_metal - q_burn_to_slag
             
-            # Chemical heat primarily happens in liquid/slag
-            q_chem_to_liquid = 0.76 * (q_oxy + q_c)
-            q_chem_to_slag = 0.16 * (q_oxy + q_c)
-            q_chem_to_gas = 0.14 * (q_oxy + q_c)
+            q_chem_to_liquid = 0.60 * (q_oxy + q_c)
+            q_chem_to_slag = 0.30 * (q_oxy + q_c)
+            q_chem_to_gas = 0.10 * (q_oxy + q_c)
 
-            q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
+            # High convective heat transfer linking Slag to Bath (ensures Slag tracks but stays slightly hotter)
+            heat_transfer_coeff_slag_bath = 40_000.0  
+            q_slag_to_bath = heat_transfer_coeff_slag_bath * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
             
             q_liquid_net = q_arc_to_liquid + q_burn_to_liquid + q_chem_to_liquid + q_slag_to_bath - (0.14 if not self.enhanced else 0.12) * q_losses
             q_direct_to_solid = q_arc_to_solid + q_burn_to_solid
@@ -127,26 +132,27 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_solid_from_bath = 0.0
             if solid_mass > 1e-6:
                 heat_transfer_coeff = 25_000.0 if not self.enhanced else 30_000.0
+                
+                # Enforce flat temperature plateau: If liquid begins to superheat while solid exists, dump heat strictly into melting
+                if state.liquid_steel_temp_k > cfg.steel_melt_temp_k:
+                    heat_transfer_coeff *= 5.0 
+                    
                 contact_area_factor = solid_fraction ** 0.66
                 q_solid_from_bath = heat_transfer_coeff * contact_area_factor * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
                 max_q_from_bath = max(0.0, state.liquid_steel_kg * cp_liquid * (state.liquid_steel_temp_k - state.solid_scrap_temp_k))
                 q_solid_from_bath = max(0.0, min(q_solid_from_bath, max_q_from_bath))
 
             q_solid_total = q_direct_to_solid + q_solid_from_bath
-
             region = "liquid_superheat"
             
             if solid_mass > 1e-6:
-                # Deduct convective heat transfer taken from the liquid 
                 q_liquid_net -= q_solid_from_bath
 
                 if state.solid_scrap_temp_k < cfg.steel_melt_temp_k - 0.5:
                     region = "solid_heating"
-                    # Add combined direct + convective heating directly to solid bulk temperature
                     state.solid_scrap_temp_k += q_solid_total / max(solid_mass * cp_solid, 1e-9)
                     state.liquid_steel_temp_k += q_liquid_net / max(max(state.liquid_steel_kg, 8_000.0) * cp_liquid, 1e-9)
                     
-                    # Prevent artificial spikes by melting scrap iteratively in the same step
                     if state.solid_scrap_temp_k > cfg.steel_melt_temp_k:
                         excess_temp = state.solid_scrap_temp_k - cfg.steel_melt_temp_k
                         excess_heat = excess_temp * solid_mass * cp_solid
@@ -164,9 +170,9 @@ class FirstPrinciplesModel(BaseEAFModel):
                     
                     q_for_melt = q_solid_total
                     
-                    # Buffer heat loop: if bath is superheated, naturally accelerate melting!
-                    if state.liquid_steel_temp_k > cfg.steel_melt_temp_k + 2.0:
-                        extra_melt_heat = max(0.0, q_liquid_net) * 0.5
+                    if state.liquid_steel_temp_k > cfg.steel_melt_temp_k:
+                        # Any excess net heat directed at the liquid gets dumped into melting instead
+                        extra_melt_heat = min(max(0.0, q_liquid_net), (state.liquid_steel_temp_k - cfg.steel_melt_temp_k) * state.liquid_steel_kg * cp_liquid)
                         q_for_melt += extra_melt_heat
                         q_liquid_net -= extra_melt_heat
                         
@@ -198,7 +204,8 @@ class FirstPrinciplesModel(BaseEAFModel):
             slag_cap = max(state.slag_kg * cfg.cp_slag_j_kgk, 1e-9)
             state.slag_temp_k += q_slag_net / slag_cap
 
-            gas_cap = max(offgas_flow * cfg.cp_offgas_j_kgk * dt + 1.2e6, 1e-9)
+            # Expanded cap so off-gas temp responds fast but doesn't glitch instantly
+            gas_cap = max(offgas_flow * cfg.cp_offgas_j_kgk * dt + 5.0e6, 1e-9)
             state.offgas_temp_k += q_gas_net / gas_cap
             state.offgas_temp_k = clamp(state.offgas_temp_k, cfg.ambient_temp_k, cfg.max_offgas_temp_k)
 
