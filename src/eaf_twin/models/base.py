@@ -36,7 +36,17 @@ class BaseEAFModel:
         if first_scrap == 0:
             first_scrap = 0.55 * self.config.initial_scrap_kg
 
-        initial_temp_k = self.config.scrap_temp_k
+        # Properly assign starting temperatures (hot heel starts hot!)
+        liq_temp = self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.ambient_temp_k
+        slag_temp = self.config.initial_slag_temp_c + 273.15 if self.config.initial_slag_kg > 0 else self.config.ambient_temp_k
+        
+        # Immediate chill from the first basket of cold scrap dropping into the hot heel
+        added_mass = first_scrap + first_dri
+        if added_mass > 0 and self.config.initial_hot_heel_kg > 0:
+            ratio = added_mass / (self.config.initial_hot_heel_kg + added_mass)
+            liq_temp -= 400.0 * ratio
+            slag_temp -= 250.0 * ratio
+            liq_temp = max(liq_temp, self.config.steel_melt_temp_k - 250.0)
 
         return FurnaceState(
             time_s=0.0,
@@ -44,13 +54,13 @@ class BaseEAFModel:
             solid_dri_kg=first_dri,
             liquid_steel_kg=self.config.initial_hot_heel_kg,
             slag_kg=self.config.initial_slag_kg,
-            steel_temp_k=initial_temp_k,
-            slag_temp_k=initial_temp_k,
-            offgas_temp_k=initial_temp_k, 
+            steel_temp_k=liq_temp,
+            slag_temp_k=slag_temp,
+            offgas_temp_k=self.config.initial_offgas_temp_c + 273.15, 
             steel_carbon_kg=0.006 * max(self.config.initial_hot_heel_kg, 1.0),
             feo_slag_kg=350.0,
-            solid_scrap_temp_k=initial_temp_k,
-            liquid_steel_temp_k=initial_temp_k,
+            solid_scrap_temp_k=self.config.scrap_temp_k,
+            liquid_steel_temp_k=liq_temp,
         )
 
     def apply_charge_events(self, state: FurnaceState, t_prev_s: float, t_now_s: float) -> None:
@@ -59,6 +69,7 @@ class BaseEAFModel:
             if t_prev_min < ev.time_min <= t_now_min:
                 added_mass = ev.scrap_kg + ev.dri_kg
                 if added_mass > 0:
+                    # Gas flushes to ambient when roof opens
                     state.offgas_temp_k = self.config.ambient_temp_k
                     
                     old_solid = max(state.solid_scrap_kg + state.solid_dri_kg, 0.0)
@@ -69,15 +80,15 @@ class BaseEAFModel:
                     state.solid_scrap_kg += ev.scrap_kg
                     state.solid_dri_kg += ev.dri_kg
                     
-                    # Thermal Chilling from Cold Charge dropping in
-                    heel_ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
-                    drop = 600.0 * heel_ratio
+                    # Apply realistic thermal chill to the liquid bath
+                    ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
+                    drop = 300.0 * ratio
                     state.liquid_steel_temp_k -= drop
-                    state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.ambient_temp_k)
-                    
+                    state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.steel_melt_temp_k - 250.0)
                     state.steel_temp_k = state.liquid_steel_temp_k
-                    state.slag_temp_k -= 100.0 * heel_ratio
-                    state.slag_temp_k = max(state.slag_temp_k, self.config.ambient_temp_k)
+                    
+                    state.slag_temp_k -= 150.0 * ratio
+                    state.slag_temp_k = max(state.slag_temp_k, self.config.steel_melt_temp_k - 250.0)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_k, self.config.max_temp_k))
