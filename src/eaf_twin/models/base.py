@@ -1,13 +1,17 @@
 from __future__ import annotations
+
 import time
 from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
+
 from eaf_twin.constants import EPS, J_PER_GJ, J_PER_MWH, SECONDS_PER_MIN
 from eaf_twin.domain.models import FurnaceConfig, FurnaceState
 from eaf_twin.simulation.schedule import active_setpoints
 from eaf_twin.units import clamp
 from eaf_twin.validation.checks import validate_state_physics
+
 
 @dataclass
 class ModelResult:
@@ -17,6 +21,7 @@ class ModelResult:
     summary: dict[str, float]
     warnings: list[str]
     runtime_s: float
+
 
 class BaseEAFModel:
     name = "Base"
@@ -28,26 +33,34 @@ class BaseEAFModel:
     def initialize_state(self) -> FurnaceState:
         first_scrap = sum(e.scrap_kg for e in self.config.charge_events if abs(e.time_min) < 1e-9)
         first_dri = sum(e.dri_kg for e in self.config.charge_events if abs(e.time_min) < 1e-9)
-        if first_scrap == 0: first_scrap = 0.55 * self.config.initial_scrap_kg
+        if first_scrap == 0:
+            first_scrap = 0.55 * self.config.initial_scrap_kg
 
-        # Fix: Ensure hot heel starts at a realistic temperature
+        # Properly assign starting temperatures (hot heel starts hot!)
         liq_temp = self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.ambient_temp_k
         slag_temp = self.config.initial_slag_temp_c + 273.15 if self.config.initial_slag_kg > 0 else self.config.ambient_temp_k
         
-        # Physical chill from first cold scrap basket
+        # Immediate chill from the first basket of cold scrap dropping into the hot heel
         added_mass = first_scrap + first_dri
         if added_mass > 0 and self.config.initial_hot_heel_kg > 0:
             ratio = added_mass / (self.config.initial_hot_heel_kg + added_mass)
-            liq_temp -= 350.0 * ratio
-            liq_temp = max(liq_temp, self.config.ambient_temp_k)
+            liq_temp -= 400.0 * ratio
+            slag_temp -= 250.0 * ratio
+            liq_temp = max(liq_temp, self.config.steel_melt_temp_k - 250.0)
 
         return FurnaceState(
-            time_s=0.0, solid_scrap_kg=first_scrap, solid_dri_kg=first_dri,
-            liquid_steel_kg=self.config.initial_hot_heel_kg, slag_kg=self.config.initial_slag_kg,
-            steel_temp_k=liq_temp, slag_temp_k=slag_temp, offgas_temp_k=self.config.ambient_temp_k,
+            time_s=0.0,
+            solid_scrap_kg=first_scrap,
+            solid_dri_kg=first_dri,
+            liquid_steel_kg=self.config.initial_hot_heel_kg,
+            slag_kg=self.config.initial_slag_kg,
+            steel_temp_k=liq_temp,
+            slag_temp_k=slag_temp,
+            offgas_temp_k=self.config.initial_offgas_temp_c + 273.15, 
             steel_carbon_kg=0.006 * max(self.config.initial_hot_heel_kg, 1.0),
-            feo_slag_kg=350.0, solid_scrap_temp_k=self.config.ambient_temp_k,
-            liquid_steel_temp_k=liq_temp
+            feo_slag_kg=350.0,
+            solid_scrap_temp_k=self.config.scrap_temp_k,
+            liquid_steel_temp_k=liq_temp,
         )
 
     def apply_charge_events(self, state: FurnaceState, t_prev_s: float, t_now_s: float) -> None:
@@ -56,20 +69,62 @@ class BaseEAFModel:
             if t_prev_min < ev.time_min <= t_now_min:
                 added_mass = ev.scrap_kg + ev.dri_kg
                 if added_mass > 0:
+                    # Gas flushes to ambient when roof opens
                     state.offgas_temp_k = self.config.ambient_temp_k
-                    old_solid_mass = state.solid_scrap_kg + state.solid_dri_kg
-                    state.solid_scrap_temp_k = (old_solid_mass * state.solid_scrap_temp_k + added_mass * self.config.ambient_temp_k) / max(old_solid_mass + added_mass, 1e-9)
+                    
+                    old_solid = max(state.solid_scrap_kg + state.solid_dri_kg, 0.0)
+                    state.solid_scrap_temp_k = (
+                        old_solid * state.solid_scrap_temp_k + added_mass * self.config.scrap_temp_k
+                    ) / max(old_solid + added_mass, 1e-9)
+                    
                     state.solid_scrap_kg += ev.scrap_kg
                     state.solid_dri_kg += ev.dri_kg
+                    
+                    # Apply realistic thermal chill to the liquid bath
                     ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
-                    state.liquid_steel_temp_k -= 300.0 * ratio
-                    state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.ambient_temp_k)
+                    drop = 300.0 * ratio
+                    state.liquid_steel_temp_k -= drop
+                    state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.steel_melt_temp_k - 250.0)
+                    state.steel_temp_k = state.liquid_steel_temp_k
+                    
+                    state.slag_temp_k -= 150.0 * ratio
+                    state.slag_temp_k = max(state.slag_temp_k, self.config.steel_melt_temp_k - 250.0)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_k, self.config.max_temp_k))
 
     def record_row(self, state: FurnaceState, inputs: dict[str, float], extras: dict[str, float]) -> dict[str, float]:
-        row = {"time_min": state.time_s / SECONDS_PER_MIN, **inputs, "solid_scrap_kg": state.solid_scrap_kg, "solid_dri_kg": state.solid_dri_kg, "liquid_steel_kg": state.liquid_steel_kg, "cum_tapped_kg": state.cum_tapped_kg, "slag_kg": state.slag_kg, "steel_temp_k": state.steel_temp_k, "solid_scrap_temp_k": state.solid_scrap_temp_k, "liquid_steel_temp_k": state.liquid_steel_temp_k, "slag_temp_k": state.slag_temp_k, "offgas_temp_k": state.offgas_temp_k, "steel_temp_c": state.steel_temp_k - 273.15, "solid_scrap_temp_c": state.solid_scrap_temp_k - 273.15, "liquid_steel_temp_c": state.liquid_steel_temp_k - 273.15, "slag_temp_c": state.slag_temp_k - 273.15, "offgas_temp_c": state.offgas_temp_k - 273.15, "melted_fraction": state.melted_fraction, "cum_electric_mwh": state.cum_electric_j / J_PER_MWH, "cum_chemical_gj": state.cum_chemical_j / J_PER_GJ, "cum_useful_heat_gj": state.cum_useful_heat_j / J_PER_GJ, "cum_losses_gj": state.cum_losses_j / J_PER_GJ, "cum_oxygen_nm3": state.cum_oxygen_nm3, "cum_ng_nm3": state.cum_ng_nm3, "cum_carbon_kg": state.cum_carbon_kg, "steel_carbon_wt_pct": state.steel_carbon_wt_pct, "feo_slag_kg": state.feo_slag_kg, "tap_start_min": None if state.tap_start_time_s is None else state.tap_start_time_s / SECONDS_PER_MIN, "tap_end_min": None if state.tap_end_time_s is None else state.tap_end_time_s / SECONDS_PER_MIN}
+        row = {
+            "time_min": state.time_s / SECONDS_PER_MIN,
+            **inputs,
+            "solid_scrap_kg": state.solid_scrap_kg,
+            "solid_dri_kg": state.solid_dri_kg,
+            "liquid_steel_kg": state.liquid_steel_kg,
+            "cum_tapped_kg": state.cum_tapped_kg,
+            "slag_kg": state.slag_kg,
+            "steel_temp_k": state.steel_temp_k,
+            "solid_scrap_temp_k": state.solid_scrap_temp_k,
+            "liquid_steel_temp_k": state.liquid_steel_temp_k,
+            "slag_temp_k": state.slag_temp_k,
+            "offgas_temp_k": state.offgas_temp_k,
+            "steel_temp_c": state.steel_temp_k - 273.15,
+            "solid_scrap_temp_c": state.solid_scrap_temp_k - 273.15,
+            "liquid_steel_temp_c": state.liquid_steel_temp_k - 273.15,
+            "slag_temp_c": state.slag_temp_k - 273.15,
+            "offgas_temp_c": state.offgas_temp_k - 273.15,
+            "melted_fraction": state.melted_fraction,
+            "cum_electric_mwh": state.cum_electric_j / J_PER_MWH,
+            "cum_chemical_gj": state.cum_chemical_j / J_PER_GJ,
+            "cum_useful_heat_gj": state.cum_useful_heat_j / J_PER_GJ,
+            "cum_losses_gj": state.cum_losses_j / J_PER_GJ,
+            "cum_oxygen_nm3": state.cum_oxygen_nm3,
+            "cum_ng_nm3": state.cum_ng_nm3,
+            "cum_carbon_kg": state.cum_carbon_kg,
+            "steel_carbon_wt_pct": state.steel_carbon_wt_pct,
+            "feo_slag_kg": state.feo_slag_kg,
+            "tap_start_min": None if state.tap_start_time_s is None else state.tap_start_time_s / SECONDS_PER_MIN,
+            "tap_end_min": None if state.tap_end_time_s is None else state.tap_end_time_s / SECONDS_PER_MIN,
+        }
         row.update(extras)
         row["steel_temp_sensor_c"] = row["steel_temp_c"] + self.rng.normal(0, self.config.measurement_noise_std)
         return row
@@ -78,7 +133,30 @@ class BaseEAFModel:
         final = df.iloc[-1]
         tapped_kg = float(final["cum_tapped_kg"])
         tapped_t = tapped_kg / 1000.0 if tapped_kg > EPS else float("nan")
-        return {"heat_time_min": float(final["time_min"]), "tap_temp_k": float(final["steel_temp_k"]), "tap_temp_c": float(final["steel_temp_c"]), "cum_tapped_kg": float(final["cum_tapped_kg"]), "tap_start_min": float(final["tap_start_min"]) if pd.notna(final["tap_start_min"]) else float("nan"), "tap_end_min": float(final["tap_end_min"]) if pd.notna(final["tap_end_min"]) else float("nan"), "total_electric_mwh": float(final["cum_electric_mwh"]), "electric_kwh_per_tapped_t": float(final["cum_electric_mwh"] * 1000 / tapped_t) if tapped_t > 0.01 else float("nan"), "oxygen_nm3_per_tapped_t": float(final["cum_oxygen_nm3"] / tapped_t) if tapped_t > 0.01 else float("nan"), "ng_nm3_per_tapped_t": float(final["cum_ng_nm3"] / tapped_t) if tapped_t > 0.01 else float("nan"), "carbon_kg_per_tapped_t": float(final["cum_carbon_kg"] / tapped_t) if tapped_t > 0.01 else float("nan"), "final_slag_kg": float(final["slag_kg"]), "warning_count": float(len(warnings)), "runtime_s": runtime_s}
+        return {
+            "heat_time_min": float(final["time_min"]),
+            "tap_temp_k": float(final["steel_temp_k"]),
+            "tap_temp_c": float(final["steel_temp_c"]),
+            "cum_tapped_kg": float(final["cum_tapped_kg"]),
+            "tap_start_min": float(final["tap_start_min"]) if pd.notna(final["tap_start_min"]) else float("nan"),
+            "tap_end_min": float(final["tap_end_min"]) if pd.notna(final["tap_end_min"]) else float("nan"),
+            "flat_bath_time_min": float(max(0.0, final["time_min"] - 8.0)),
+            "total_electric_mwh": float(final["cum_electric_mwh"]),
+            "total_chemical_gj": float(final["cum_chemical_gj"]),
+            "total_losses_gj": float(final["cum_losses_gj"]),
+            "total_useful_heat_gj": float(final["cum_useful_heat_gj"]),
+            "electric_kwh_per_tapped_t": float(final["cum_electric_mwh"] * 1000 / tapped_t) if tapped_t == tapped_t else float("nan"),
+            "oxygen_nm3_per_tapped_t": float(final["cum_oxygen_nm3"] / tapped_t) if tapped_t == tapped_t else float("nan"),
+            "ng_nm3_per_tapped_t": float(final["cum_ng_nm3"] / tapped_t) if tapped_t == tapped_t else float("nan"),
+            "carbon_kg_per_tapped_t": float(final["cum_carbon_kg"] / tapped_t) if tapped_t == tapped_t else float("nan"),
+            "final_slag_kg": float(final["slag_kg"]),
+            "final_carbon_wt_pct": float(final["steel_carbon_wt_pct"]),
+            "warning_count": float(len(warnings)),
+            "runtime_s": runtime_s,
+        }
+
+    def simulate(self) -> ModelResult:
+        raise NotImplementedError
 
     def run_loop(self, step_fn):
         start = time.perf_counter()
@@ -92,25 +170,39 @@ class BaseEAFModel:
             self.validate_state(state, warnings)
             rows.append(self.record_row(state, inputs, extras))
             state.time_s += self.config.dt_s
-            if state.tap_end_time_s is not None: break
+            if state.tap_end_time_s is not None:
+                break
         df = pd.DataFrame(rows)
         runtime = time.perf_counter() - start
         return ModelResult(self.name, self.config.heat_name, df, self.compute_summary(df, runtime, warnings), warnings, runtime)
 
+
 def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
+    dt = cfg.dt_s
     ready_by_melt = state.melted_fraction >= 0.98 and state.steel_temp_k >= cfg.tap_target_temp_k
-    ready_by_time = (state.time_s / SECONDS_PER_MIN) >= 55.0 and state.melted_fraction >= 0.95 and state.steel_temp_k >= cfg.steel_melt_temp_k
-    if (ready_by_melt or ready_by_time) and not state.tapping_started:
+    ready_by_time = (
+        (state.time_s / SECONDS_PER_MIN) >= 55.0
+        and state.liquid_steel_kg >= 0.92 * cfg.tap_target_steel_kg
+        and state.melted_fraction >= 0.95
+        and state.steel_temp_k >= cfg.steel_melt_temp_k
+    )
+    
+    if ready_by_melt or ready_by_time:
         state.tapping_started = True
-        state.tap_start_time_s = state.time_s
+        if state.tap_start_time_s is None:
+            state.tap_start_time_s = state.time_s
+            
     tap_mass = 0.0
     if state.tapping_started:
-        tap_mass = min(state.liquid_steel_kg, cfg.tap_rate_kg_s * cfg.dt_s)
+        tap_mass = min(state.liquid_steel_kg, cfg.tap_rate_kg_s * dt)
         if tap_mass > 0:
             carbon_fraction = state.steel_carbon_kg / max(state.liquid_steel_kg, 1e-9)
             state.steel_carbon_kg = max(0.0, state.steel_carbon_kg - tap_mass * carbon_fraction)
+            
             state.liquid_steel_kg -= tap_mass
             state.cum_tapped_kg += tap_mass
+            
         if state.liquid_steel_kg <= 500.0 and state.tap_end_time_s is None:
             state.tap_end_time_s = state.time_s
+            
     return tap_mass
