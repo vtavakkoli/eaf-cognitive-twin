@@ -59,7 +59,6 @@ class BaseEAFModel:
             if t_prev_min < ev.time_min <= t_now_min:
                 added_mass = ev.scrap_kg + ev.dri_kg
                 if added_mass > 0:
-                    
                     state.offgas_temp_k = self.config.ambient_temp_k
                     
                     old_solid = max(state.solid_scrap_kg + state.solid_dri_kg, 0.0)
@@ -69,16 +68,6 @@ class BaseEAFModel:
                     
                     state.solid_scrap_kg += ev.scrap_kg
                     state.solid_dri_kg += ev.dri_kg
-                    
-                    heel_ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
-                    if state.liquid_steel_temp_k > self.config.steel_melt_temp_k - 200.0:
-                        drop = 150.0 * heel_ratio
-                        state.liquid_steel_temp_k -= clamp(drop, 10.0, 150.0)
-                        state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.ambient_temp_k)
-                        state.steel_temp_k = state.liquid_steel_temp_k
-                        
-                        state.slag_temp_k -= clamp(60.0 * heel_ratio, 10.0, 100.0)
-                        state.slag_temp_k = max(state.slag_temp_k, self.config.ambient_temp_k)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_k, self.config.max_temp_k))
@@ -185,7 +174,6 @@ def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
     if state.tapping_started:
         tap_mass = min(state.liquid_steel_kg, cfg.tap_rate_kg_s * dt)
         if tap_mass > 0:
-            # FIX: Drain carbon proportionally alongside the liquid steel it is dissolved in
             carbon_fraction = state.steel_carbon_kg / max(state.liquid_steel_kg, 1e-9)
             state.steel_carbon_kg = max(0.0, state.steel_carbon_kg - tap_mass * carbon_fraction)
             
