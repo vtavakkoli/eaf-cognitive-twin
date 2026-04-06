@@ -68,6 +68,16 @@ class BaseEAFModel:
                     
                     state.solid_scrap_kg += ev.scrap_kg
                     state.solid_dri_kg += ev.dri_kg
+                    
+                    # Thermal Chilling from Cold Charge dropping in
+                    heel_ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
+                    drop = 600.0 * heel_ratio
+                    state.liquid_steel_temp_k -= drop
+                    state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.ambient_temp_k)
+                    
+                    state.steel_temp_k = state.liquid_steel_temp_k
+                    state.slag_temp_k -= 100.0 * heel_ratio
+                    state.slag_temp_k = max(state.slag_temp_k, self.config.ambient_temp_k)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_k, self.config.max_temp_k))
@@ -165,6 +175,7 @@ def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
         and state.melted_fraction >= 0.95
         and state.steel_temp_k >= cfg.steel_melt_temp_k
     )
+    
     if ready_by_melt or ready_by_time:
         state.tapping_started = True
         if state.tap_start_time_s is None:
