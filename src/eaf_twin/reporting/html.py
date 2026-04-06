@@ -20,16 +20,19 @@ def write_result_html(
 ) -> Path:
     """Create a single tabbed HTML report for all model/scenario outputs."""
     summary_df = pd.DataFrame(summary_rows)
+    
+    # UPDATED: These must match exactly what `base.py`'s `compute_summary` 
+    # and `runner.py`'s `run_full_simulation` actually return!
     keep_cols = [
         "scenario",
         "model",
         "model_status",
+        "heat_time_min",
         "tap_temp_c",
-        "melted_fraction",
-        "tap_steel_kg",
-        "electric_kwh_t",
-        "oxygen_nm3_t",
-        "ng_nm3_t",
+        "cum_tapped_kg",
+        "electric_kwh_per_tapped_t",
+        "oxygen_nm3_per_tapped_t",
+        "ng_nm3_per_tapped_t",
         "issues",
     ]
 
@@ -78,6 +81,7 @@ def write_result_html(
     )
     panels = "".join(model_section(m) for m in model_names)
     overall_table = render_table(summary_df.copy())
+    
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -92,9 +96,11 @@ def write_result_html(
     .tab-panel {{ display: none; }}
     .tab-panel.active {{ display: block; }}
     .summary-table {{ border-collapse: collapse; width: 100%; margin-bottom: 14px; }}
-    .summary-table th, .summary-table td {{ border: 1px solid #ccc; padding: 6px; font-size: 13px; }}
+    .summary-table th, .summary-table td {{ border: 1px solid #ccc; padding: 6px; font-size: 13px; text-align: left; }}
+    .summary-table th {{ background-color: #f8f9fa; }}
     .scenario-block {{ margin: 16px 0 26px; }}
-    .plot-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }}
+    /* Increased min-width from 320px to 450px so the new detailed plots are easier to read */
+    .plot-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(450px, 1fr)); gap: 15px; }}
     .plot-grid figure {{ margin: 0; }}
     .plot-grid img {{ width: 100%; border: 1px solid #ddd; border-radius: 4px; }}
     .plot-grid figcaption {{ font-size: 12px; color: #444; padding-top: 4px; word-break: break-word; }}
