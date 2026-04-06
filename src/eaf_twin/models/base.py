@@ -35,37 +35,54 @@ class BaseEAFModel:
         first_dri = sum(e.dri_kg for e in self.config.charge_events if abs(e.time_min) < 1e-9)
         if first_scrap == 0:
             first_scrap = 0.55 * self.config.initial_scrap_kg
+
+        liquid_temp = self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.ambient_temp_k
+        slag_temp = self.config.initial_slag_temp_c + 273.15 if self.config.initial_slag_kg > 0 else self.config.ambient_temp_k
+
+        # Apply realistic initial chilling if there is a hot heel and cold initial charge
+        added_mass = first_scrap + first_dri
+        if added_mass > 0 and self.config.initial_hot_heel_kg > 0:
+            heel_ratio = added_mass / max(self.config.initial_hot_heel_kg + added_mass, 1.0)
+            liquid_temp -= clamp(150.0 * heel_ratio, 10.0, 150.0)
+            liquid_temp = max(liquid_temp, self.config.steel_melt_temp_k - 100.0)
+            slag_temp -= clamp(60.0 * heel_ratio, 10.0, 100.0)
+
         return FurnaceState(
             time_s=0.0,
             solid_scrap_kg=first_scrap,
             solid_dri_kg=first_dri,
             liquid_steel_kg=self.config.initial_hot_heel_kg,
             slag_kg=self.config.initial_slag_kg,
-            steel_temp_k=self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.ambient_temp_k,
-            slag_temp_k=self.config.initial_slag_temp_c + 273.15 if self.config.initial_slag_kg > 0 else self.config.ambient_temp_k,
+            steel_temp_k=liquid_temp,
+            slag_temp_k=slag_temp,
             offgas_temp_k=self.config.initial_offgas_temp_c + 273.15,
             steel_carbon_kg=0.006 * max(self.config.initial_hot_heel_kg, 1.0),
             feo_slag_kg=350.0,
             solid_scrap_temp_k=self.config.scrap_temp_k,
-            liquid_steel_temp_k=self.config.initial_hot_heel_temp_c + 273.15 if self.config.initial_hot_heel_kg > 0 else self.config.scrap_temp_k,
+            liquid_steel_temp_k=liquid_temp,
         )
 
     def apply_charge_events(self, state: FurnaceState, t_prev_s: float, t_now_s: float) -> None:
         t_prev_min, t_now_min = t_prev_s / SECONDS_PER_MIN, t_now_s / SECONDS_PER_MIN
         for ev in self.config.charge_events:
             if t_prev_min < ev.time_min <= t_now_min:
-                state.solid_scrap_kg += ev.scrap_kg
-                state.solid_dri_kg += ev.dri_kg
                 added_mass = ev.scrap_kg + ev.dri_kg
                 if added_mass > 0:
-                    old_solid = max(state.solid_scrap_kg + state.solid_dri_kg - added_mass, 0.0)
+                    old_solid = max(state.solid_scrap_kg + state.solid_dri_kg, 0.0)
                     state.solid_scrap_temp_k = (
                         old_solid * state.solid_scrap_temp_k + added_mass * self.config.scrap_temp_k
                     ) / max(old_solid + added_mass, 1e-9)
+                    
+                    state.solid_scrap_kg += ev.scrap_kg
+                    state.solid_dri_kg += ev.dri_kg
+                    
+                    # Physically accurate chilling drop scaling as plotted in attached Figure 9
                     heel_ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
-                    state.liquid_steel_temp_k -= clamp(40.0 * heel_ratio, 4.0, 35.0)
+                    drop = 150.0 * heel_ratio
+                    state.liquid_steel_temp_k -= clamp(drop, 10.0, 150.0)
+                    state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, self.config.steel_melt_temp_k - 100.0)
                     state.steel_temp_k = state.liquid_steel_temp_k
-                    state.slag_temp_k -= clamp(8.0 * heel_ratio, 1.0, 7.0)
+                    state.slag_temp_k -= clamp(60.0 * heel_ratio, 10.0, 100.0)
 
     def validate_state(self, state: FurnaceState, warnings: list[str]) -> None:
         warnings.extend(validate_state_physics(state, self.config.min_temp_k, self.config.max_temp_k))
