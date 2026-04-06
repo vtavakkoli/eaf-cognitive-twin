@@ -18,11 +18,17 @@ def plot_core(df: pd.DataFrame, out_dir: Path, scenario: str, model_name: str) -
         plt.close()
         return path
 
-    # Temperature trajectories
+    # Temperature trajectories (Updated to match Figure 9 of the paper)
     plt.figure(figsize=(9, 5))
-    plt.plot(t, df["liquid_steel_temp_c"], label="Liquid steel")
-    plt.plot(t, df["slag_temp_c"], label="Slag")
-    plt.plot(t, df["offgas_temp_c"], label="Off-gas")
+    plt.plot(t, df["liquid_steel_temp_c"], label="Liquid steel ($T_{mm}$)", color="blue", linewidth=1.5)
+    
+    # Add the solid scrap temperature which we just fixed in the physics model
+    if "solid_scrap_temp_c" in df.columns:
+        plt.plot(t, df["solid_scrap_temp_c"], label="Solid scrap ($T_{ss}$)", color="red", linestyle="--", linewidth=1.5)
+        
+    plt.plot(t, df["slag_temp_c"], label="Slag", color="orange", linewidth=1.5)
+    plt.plot(t, df["offgas_temp_c"], label="Off-gas", color="green", linewidth=1.5)
+    
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.xlabel("Time [min]")
