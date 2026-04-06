@@ -36,7 +36,6 @@ class BaseEAFModel:
         if first_scrap == 0:
             first_scrap = 0.55 * self.config.initial_scrap_kg
 
-        # Fix 3: Force all materials to strictly start at ambient / room temp (approx 23C)
         initial_temp_k = self.config.scrap_temp_k
 
         return FurnaceState(
@@ -61,7 +60,6 @@ class BaseEAFModel:
                 added_mass = ev.scrap_kg + ev.dri_kg
                 if added_mass > 0:
                     
-                    # Fix 2: When adding new scrap (furnace opens), gas immediately returns to ambient/room temp
                     state.offgas_temp_k = self.config.ambient_temp_k
                     
                     old_solid = max(state.solid_scrap_kg + state.solid_dri_kg, 0.0)
@@ -72,7 +70,6 @@ class BaseEAFModel:
                     state.solid_scrap_kg += ev.scrap_kg
                     state.solid_dri_kg += ev.dri_kg
                     
-                    # Apply physically severe drop if liquid is currently melted and hot
                     heel_ratio = added_mass / max(state.liquid_steel_kg + added_mass, 1.0)
                     if state.liquid_steel_temp_k > self.config.steel_melt_temp_k - 200.0:
                         drop = 150.0 * heel_ratio
@@ -183,11 +180,19 @@ def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
         state.tapping_started = True
         if state.tap_start_time_s is None:
             state.tap_start_time_s = state.time_s
+            
     tap_mass = 0.0
     if state.tapping_started:
         tap_mass = min(state.liquid_steel_kg, cfg.tap_rate_kg_s * dt)
-        state.liquid_steel_kg -= tap_mass
-        state.cum_tapped_kg += tap_mass
+        if tap_mass > 0:
+            # FIX: Drain carbon proportionally alongside the liquid steel it is dissolved in
+            carbon_fraction = state.steel_carbon_kg / max(state.liquid_steel_kg, 1e-9)
+            state.steel_carbon_kg = max(0.0, state.steel_carbon_kg - tap_mass * carbon_fraction)
+            
+            state.liquid_steel_kg -= tap_mass
+            state.cum_tapped_kg += tap_mass
+            
         if state.liquid_steel_kg <= 500.0 and state.tap_end_time_s is None:
             state.tap_end_time_s = state.time_s
+            
     return tap_mass
