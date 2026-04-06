@@ -23,7 +23,6 @@ class EmpiricalModel(BaseEAFModel):
             
             inj_c = (inputs["carbon_kg_min"] / 60.0) * dt
             q_carbon = cfg.carbon_reaction_efficiency * inj_c * cfg.carbon_heat_j_kg * dt
-            
             q_chem = q_burn + q_oxy + q_carbon
 
             eta = {"bore_in": 0.60, "main_melting": 0.75, "refining": 0.65, "superheat": 0.62, "tapping": 0.40}[stg]
@@ -39,6 +38,9 @@ class EmpiricalModel(BaseEAFModel):
             cp_sol = cfg.cp_scrap_j_kgk
             cp_liq = cfg.cp_steel_j_kgk
             latent = cfg.latent_heat_steel_j_kg
+            
+            cap_sol = solid_mass * cp_sol
+            cap_liq = state.liquid_steel_kg * cp_liq
 
             q_net = max(0.0, useful - q_loss)
             q_melt = 0.0
@@ -50,26 +52,25 @@ class EmpiricalModel(BaseEAFModel):
                 q_liquid = q_net * f_melt
                 q_solid = q_net * (1.0 - f_melt)
                 
-                # Convective flow pushing solid to melting temp
                 q_conv = 0.0
                 if state.liquid_steel_temp_k > state.solid_scrap_temp_k:
-                    q_conv = min(q_liquid, 10000.0 * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt)
+                    q_conv = min(q_liquid, 15000.0 * (state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt)
                 
                 q_liquid -= q_conv
                 q_solid += q_conv
                 
-                state.solid_scrap_temp_k += q_solid / max(solid_mass * cp_sol, 1e-9)
-                state.liquid_steel_temp_k += q_liquid / max(state.liquid_steel_kg * cp_liq, 1e-9)
+                state.solid_scrap_temp_k += q_solid / max(cap_sol, 1e-9)
+                state.liquid_steel_temp_k += q_liquid / max(cap_liq, 1e-9)
                 
                 if state.solid_scrap_temp_k > cfg.steel_melt_temp_k:
                     region = "phase_change"
-                    excess_j = (state.solid_scrap_temp_k - cfg.steel_melt_temp_k) * solid_mass * cp_sol
+                    excess_j = (state.solid_scrap_temp_k - cfg.steel_melt_temp_k) * cap_sol
                     state.solid_scrap_temp_k = cfg.steel_melt_temp_k
                     
-                    if state.liquid_steel_temp_k > cfg.steel_melt_temp_k + 2.0:
-                        bath_ex = (state.liquid_steel_temp_k - cfg.steel_melt_temp_k) * state.liquid_steel_kg * cp_liq * 0.8
+                    if state.liquid_steel_temp_k > cfg.steel_melt_temp_k + 0.5:
+                        bath_ex = (state.liquid_steel_temp_k - cfg.steel_melt_temp_k) * cap_liq * 0.9
                         excess_j += bath_ex
-                        state.liquid_steel_temp_k -= bath_ex / max(state.liquid_steel_kg * cp_liq, 1e-9)
+                        state.liquid_steel_temp_k -= bath_ex / max(cap_liq, 1e-9)
                         
                     melt_scrap = min(state.solid_scrap_kg, excess_j / latent)
                     q_melt = melt_scrap * latent
@@ -87,7 +88,8 @@ class EmpiricalModel(BaseEAFModel):
                 state.solid_scrap_kg = 0.0
                 state.solid_dri_kg = 0.0
                 state.solid_scrap_temp_k = cfg.steel_melt_temp_k
-                eff_cap_liq = max(state.liquid_steel_kg * cp_liq, 5000.0 * cp_liq)
+                
+                eff_cap_liq = max(cap_liq, 5000.0 * cp_liq)
                 state.liquid_steel_temp_k += q_net / eff_cap_liq
 
             power_ratio = inputs["power_mw"] / 80.0
