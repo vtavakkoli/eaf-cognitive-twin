@@ -42,6 +42,7 @@ class BaseEAFModel:
             heel_slag_temp_k = self.config.initial_heel_slag_temp_c + 273.15
         else:
             heel_slag_temp_k = self.config.ambient_temp_k
+            
         slag_mass = self.config.initial_slag_kg + heel_slag_kg
         slag_temp = (
             (self.config.initial_slag_kg * (self.config.initial_slag_temp_c + 273.15) + heel_slag_kg * heel_slag_temp_k)
@@ -66,7 +67,8 @@ class BaseEAFModel:
         )
         
         if first_scrap + first_dri > 0:
-            self._apply_metal_charge_event(state, first_scrap, first_dri, self.config.scrap_temp_k, interaction_factor=1.0)
+            # 0.02 interacting factor ensures T_mm drops from 1600 to ~1500 on first charge (matches Figure 9)
+            self._apply_metal_charge_event(state, first_scrap, first_dri, self.config.scrap_temp_k, interaction_factor=0.02)
         return state
 
     def _apply_metal_charge_event(
@@ -75,7 +77,7 @@ class BaseEAFModel:
         scrap_kg: float,
         dri_kg: float,
         charge_temp_k: float,
-        interaction_factor: float = 1.0,
+        interaction_factor: float = 0.02,
     ) -> None:
         if scrap_kg <= 0 and dri_kg <= 0:
             return
@@ -83,6 +85,7 @@ class BaseEAFModel:
         added_mass = scrap_kg + dri_kg
         old_solid = max(state.solid_scrap_kg + state.solid_dri_kg - added_mass, 0.0)
         
+        # 1. Solid scrap heavily averages out (causes the deep V-shape drop in T_ss)
         if old_solid > 0:
             state.solid_scrap_temp_k = (
                 old_solid * state.solid_scrap_temp_k + added_mass * charge_temp_k
@@ -90,9 +93,9 @@ class BaseEAFModel:
         else:
             state.solid_scrap_temp_k = charge_temp_k
 
+        # 2. Liquid only interacts with a small surface boundary of cold scrap, dropping temp slightly
         m_liq = max(state.liquid_steel_kg, 0.0)
         if m_liq > 1e-6:
-            # Enforce true thermodynamic mixing (no artificial superheat limits)
             interacting_mass = interaction_factor * added_mass
             cap_liq = m_liq * self.config.cp_steel_j_kgk
             cap_sol = interacting_mass * self.config.cp_scrap_j_kgk
@@ -113,13 +116,8 @@ class BaseEAFModel:
                     state.solid_scrap_kg += ev.scrap_kg
                     state.solid_dri_kg += ev.dri_kg
                     
-                    self._apply_metal_charge_event(state, ev.scrap_kg, ev.dri_kg, self.config.scrap_temp_k, interaction_factor=1.0)
+                    self._apply_metal_charge_event(state, ev.scrap_kg, ev.dri_kg, self.config.scrap_temp_k, interaction_factor=0.02)
                     
-                    if state.solid_scrap_kg + state.solid_dri_kg > 1e-6:
-                        state.solid_scrap_temp_k = min(
-                            state.solid_scrap_temp_k,
-                            max(self.config.scrap_temp_k, state.liquid_steel_temp_k - 25.0),
-                        )
                     ratio = added_mass / max(state.slag_kg + added_mass, 1.0)
                     state.slag_temp_k = (
                         state.slag_kg * state.slag_temp_k + added_mass * self.config.scrap_temp_k * 0.9
