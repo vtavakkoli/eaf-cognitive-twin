@@ -19,6 +19,14 @@ def validate_state_physics(state: FurnaceState, min_temp_k: float, max_temp_k: f
 
     if not (0.0 <= state.melted_fraction <= 1.0):
         warnings.append(f"Melted fraction out of range: {state.melted_fraction:.4f}")
+    if state.solid_scrap_kg + state.solid_dri_kg < -1e-6:
+        warnings.append("Solid fraction negative due to numeric drift.")
+    if state.liquid_steel_kg > 1e-6 and state.liquid_steel_temp_k < 1600.0:
+        warnings.append(
+            f"Liquid steel temperature is very low for fully molten steel: {state.liquid_steel_temp_k:.1f} K"
+        )
+    if state.tapping_started and (state.melted_fraction < 0.95 or state.steel_temp_k < 1700.0):
+        warnings.append("Tapping started before sufficient melt fraction/temperature.")
     return warnings
 
 
