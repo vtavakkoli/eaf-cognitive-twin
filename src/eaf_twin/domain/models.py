@@ -44,8 +44,11 @@ class FurnaceConfig:
     initial_steel_temp_c: float = 23.0
     initial_slag_temp_c: float = 23.0
     initial_offgas_temp_c: float = 23.0
+    # Explicit initial thermal pools
     initial_hot_heel_kg: float = 8_000.0
     initial_hot_heel_temp_c: float = 1600.0
+    initial_heel_slag_kg: float = 0.0
+    initial_heel_slag_temp_c: float = 1600.0
     tap_target_temp_c: float = 1645.0
 
     cp_steel_j_kgk: float = 820.0
@@ -148,6 +151,8 @@ class FurnaceState:
     cum_ng_nm3: float = 0.0
     cum_carbon_kg: float = 0.0
     cum_tapped_kg: float = 0.0
+    cum_latent_heat_j: float = 0.0
+    enthalpy_balance_residual_j: float = 0.0
     tap_start_time_s: Optional[float] = None
     tap_end_time_s: Optional[float] = None
     tapping_started: bool = False
