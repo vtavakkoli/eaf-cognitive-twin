@@ -81,9 +81,12 @@ class FirstPrinciplesModel(BaseEAFModel):
                 * dt
             )
             offgas_flow = 1.25 * o2_flow + 0.78 * ng_flow + 0.4 * c_flow + 2.0
-            gas_source_w = (0.26 * power_w + 0.28 * (q_chem / max(dt, 1e-9)))
-            target_gas_k = cfg.ambient_temp_k + gas_source_w / max(offgas_flow * cfg.cp_offgas_j_kgk, 1e-6)
-            state.offgas_temp_k += (target_gas_k - state.offgas_temp_k) * clamp(dt / 12.0, 0.05, 1.0)
+            effective_gas_mass_flow = offgas_flow + 24.0
+            gas_source_w = (0.17 * power_w + 0.20 * (q_chem / max(dt, 1e-9)))
+            target_gas_k = cfg.ambient_temp_k + gas_source_w / max(effective_gas_mass_flow * cfg.cp_offgas_j_kgk, 1e-6)
+            if state.roof_open_remaining_s > 1e-6:
+                target_gas_k = cfg.ambient_temp_k
+            state.offgas_temp_k += (target_gas_k - state.offgas_temp_k) * clamp(dt / 30.0, 0.05, 1.0)
             state.offgas_temp_k = clamp(state.offgas_temp_k, cfg.ambient_temp_k, cfg.max_offgas_temp_k)
             q_offgas = offgas_flow * cfg.cp_offgas_j_kgk * max(0.0, state.offgas_temp_k - cfg.ambient_temp_k) * dt
             q_losses = q_wall + q_rad + q_offgas
@@ -94,25 +97,26 @@ class FirstPrinciplesModel(BaseEAFModel):
             solid_fraction = solid_mass / total_metal_mass
 
             # Energy routing is scenario-sensitive through arc efficiency, oxygen, burner and foamy slag.
-            q_arc_to_metal = q_arc_useful * (0.80 if not self.enhanced else 0.83)
-            q_arc_to_slag = q_arc_useful * (0.17 if not self.enhanced else 0.14)
+            q_arc_to_metal = q_arc_useful * (0.88 if not self.enhanced else 0.90)
+            q_arc_to_slag = q_arc_useful * (0.10 if not self.enhanced else 0.08)
             q_arc_to_solid = q_arc_to_metal * solid_fraction
             q_arc_to_liquid = q_arc_to_metal * (1.0 - solid_fraction)
 
-            q_burn_to_solid = q_burn * 0.35
-            q_burn_to_liquid = q_burn * 0.35
+            q_burn_to_solid = q_burn * 0.38
+            q_burn_to_liquid = q_burn * 0.30
             q_burn_to_slag = q_burn * 0.20
 
-            q_chem_to_liquid = 0.65 * (q_oxy + q_c)
+            q_chem_to_solid = 0.20 * (q_oxy + q_c)
+            q_chem_to_liquid = 0.45 * (q_oxy + q_c)
             q_chem_to_slag = 0.30 * (q_oxy + q_c)
 
             # Slag-metal exchange and cold flux sink are explicitly conserved.
             q_slag_to_bath = cfg.slag_to_bath_heat_coeff_w_k * (state.slag_temp_k - state.liquid_steel_temp_k) * dt
             q_flux_sink = flux_flow * dt * cfg.cp_slag_j_kgk * max(0.0, state.slag_temp_k - cfg.ambient_temp_k)
 
-            q_liquid_net = q_arc_to_liquid + q_burn_to_liquid + q_chem_to_liquid + q_slag_to_bath - 0.55 * q_losses
-            q_solid_net = q_arc_to_solid + q_burn_to_solid
-            q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - q_flux_sink - 0.45 * q_losses
+            q_liquid_net = q_arc_to_liquid + q_burn_to_liquid + q_chem_to_liquid + q_slag_to_bath - 0.35 * q_losses
+            q_solid_net = q_arc_to_solid + q_burn_to_solid + q_chem_to_solid
+            q_slag_net = q_arc_to_slag + q_burn_to_slag + q_chem_to_slag - q_slag_to_bath - q_flux_sink - 0.25 * q_losses
 
             cp_sol = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
             cp_liq = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
@@ -170,7 +174,7 @@ class FirstPrinciplesModel(BaseEAFModel):
             liquid_mass = max(state.liquid_steel_kg, 0.0)
             if liquid_mass > 1e-6:
                 state.liquid_steel_temp_k += q_liquid_net / max(liquid_mass * cp_liq, 1e-9)
-                state.liquid_steel_temp_k = max(t_m - 10.0 if liquid_mass > 0 else cfg.ambient_temp_k, state.liquid_steel_temp_k)
+                state.liquid_steel_temp_k = max(cfg.steel_melt_temp_k - 45.0, state.liquid_steel_temp_k)
             else:
                 state.liquid_steel_temp_k = state.solid_scrap_temp_k
 

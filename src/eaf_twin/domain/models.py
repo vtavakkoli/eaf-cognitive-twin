@@ -156,6 +156,7 @@ class FurnaceState:
     tap_start_time_s: Optional[float] = None
     tap_end_time_s: Optional[float] = None
     tapping_started: bool = False
+    roof_open_remaining_s: float = 0.0
 
     @property
     def melted_fraction(self) -> float:
