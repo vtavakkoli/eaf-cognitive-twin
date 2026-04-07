@@ -58,6 +58,9 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_burn = ng_flow * cfg.lhv_ng_j_nm3 * dt * cfg.eta_burner
             q_oxy = o2_flow * cfg.oxygen_heat_j_nm3 * cfg.oxygen_reaction_efficiency * dt
             q_c = c_flow * cfg.carbon_heat_j_kg * cfg.carbon_reaction_efficiency * dt
+            
+            # --- ADDED: Total chemical heat for the summary trackers ---
+            q_chem = q_burn + q_oxy + q_c
 
             # Chemistry and Mass
             fe_oxid = min(state.liquid_steel_kg * 0.0015, o2_flow * cfg.fe_oxidation_ratio_per_nm3_o2 * dt)
