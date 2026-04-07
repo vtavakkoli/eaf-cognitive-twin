@@ -67,7 +67,6 @@ class BaseEAFModel:
         )
         
         if first_scrap + first_dri > 0:
-            # 0.02 interacting factor ensures T_mm drops from 1600 to ~1500 on first charge (matches Figure 9)
             self._apply_metal_charge_event(state, first_scrap, first_dri, self.config.scrap_temp_k, interaction_factor=0.02)
         return state
 
