@@ -45,6 +45,15 @@ def plot_core(df: pd.DataFrame, out_dir: Path, scenario: str, model_name: str) -
     plt.title(f"Melted fraction ({scenario} | {model_name})")
     paths.append(save("melted_fraction"))
 
+    # Remaining solid metallic charge
+    plt.figure(figsize=(9, 5))
+    plt.plot(t, df.get("remaining_solid_kg", df["solid_scrap_kg"] + df.get("solid_dri_kg", 0.0)), color="tab:red")
+    plt.grid(True, alpha=0.3)
+    plt.xlabel("Time [min]")
+    plt.ylabel("Remaining solid [kg]")
+    plt.title(f"Remaining solid metallic charge ({scenario} | {model_name})")
+    paths.append(save("remaining_solid"))
+
     # Metal phase masses
     solid_metal = df["solid_scrap_kg"] + df.get("solid_dri_kg", 0.0)
     plt.figure(figsize=(9, 5))
