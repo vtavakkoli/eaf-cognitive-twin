@@ -18,32 +18,20 @@ def plot_core(df: pd.DataFrame, out_dir: Path, scenario: str, model_name: str) -
         plt.close()
         return path
 
-    # Temperature trajectories (Corrected with Bulk mass-weighted T_mm and T_ss formulas)
+    # Temperature trajectories
     plt.figure(figsize=(9, 5))
     
-    # Check if the model explicitly provided the bulk calculations, else compute them
-    if "t_mm_c" in df.columns and "t_ss_c" in df.columns:
-        t_mm = df["t_mm_c"]
-        t_ss = df["t_ss_c"]
-    else:
-        m_slag = df["slag_kg"]
-        t_slag = df["slag_temp_c"]
-        m_liq = df["liquid_steel_kg"]
-        t_liq = df["liquid_steel_temp_c"]
-        
-        # Tmm: Mass-weighted average of the already melted material (Slag + Liquid Steel)
-        t_mm = (m_slag * t_slag + m_liq * t_liq) / (m_liq + m_slag).clip(lower=1e-9)
-        # Tss: Solid material temperature (dominated by solid scrap)
-        t_ss = df["solid_scrap_temp_c"]
+    # Extract calculated outputs
+    t_mm = df["t_mm_c"] if "t_mm_c" in df.columns else df["liquid_steel_temp_c"]
+    t_ss = df["t_ss_c"] if "t_ss_c" in df.columns else df["solid_scrap_temp_c"]
 
-    # Plot the aggregated T_mm and T_ss
-    plt.plot(t, t_mm, label="Already melted material ($T_{mm}$)", color="blue", linewidth=1.5)
-    plt.plot(t, t_ss, label="Solid material ($T_{ss}$)", color="red", linestyle="--", linewidth=1.5)
+    # Match paper line styles exactly
+    plt.plot(t, t_mm, label="Default $T_{mm}$", color="blue", linestyle="--", linewidth=1.5)
+    plt.plot(t, t_ss, label="Default $T_{ss}$", color="red", linestyle="--", linewidth=1.5)
     
-    # Plot the individual component temperatures for context (slightly transparent)
-    plt.plot(t, df["liquid_steel_temp_c"], label="Liquid steel component", color="cyan", linewidth=1.0, alpha=0.5)
-    plt.plot(t, df["slag_temp_c"], label="Slag component", color="orange", linewidth=1.0, alpha=0.6)
-    plt.plot(t, df["offgas_temp_c"], label="Off-gas", color="green", linewidth=1.5)
+    # Hide the raw components from the legend if not needed, but keep them plotted faintly
+    plt.plot(t, df["slag_temp_c"], label="Slag Temp", color="orange", linewidth=1.0, alpha=0.3)
+    plt.plot(t, df["offgas_temp_c"], label="Off-gas Temp", color="green", linewidth=1.0, alpha=0.3)
     
     plt.legend()
     plt.grid(True, alpha=0.3)
