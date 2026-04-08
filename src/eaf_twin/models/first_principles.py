@@ -74,6 +74,10 @@ class FirstPrinciplesModel(BaseEAFModel):
             total_metal_mass = max(liquid_mass + solid_mass, 1.0)
             sf = solid_mass / total_metal_mass
 
+            # Calculate specific heat capacities early for thermal constraints
+            cp_sol = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
+            cp_liq = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
+
             # 3. Energy Routing (5 Medium Framework)
             # Solid Scrap directly absorbs massive heat from the arc and burners
             q_arc_ss = q_arc_useful * sf * 0.85
@@ -88,10 +92,18 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_chem_mm = (q_oxy + q_c) * 0.80
             q_chem_slag = (q_oxy + q_c) * 0.20
 
-            # 4. Thermal Coupling (Liquid Steel strongly heats Solid Scrap)
+            # 4. Thermal Coupling
             k_mm_ss = 30000.0 + 20000.0 * (liquid_mass / 100000.0)
-            q_mm_to_ss = k_mm_ss * max(0.0, state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
+            q_mm_to_ss_unbounded = k_mm_ss * max(0.0, state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
+            
+            # Prevent liquid steel from cooling significantly below its freezing point without undergoing tracking phase change back to solid
+            max_q_transfer = max(0.0, liquid_mass * cp_liq * (state.liquid_steel_temp_k - (t_m - 30.0)))
+            q_mm_to_ss = min(q_mm_to_ss_unbounded, max_q_transfer)
             q_ss_to_mm = k_mm_ss * max(0.0, state.solid_scrap_temp_k - state.liquid_steel_temp_k) * dt
+
+            # Bath to Slag coupling prevents slag from artificially decoupling
+            k_mm_slag = cfg.slag_to_bath_heat_coeff_w_k
+            q_mm_to_slag = k_mm_slag * (state.liquid_steel_temp_k - state.slag_temp_k) * dt
 
             # 5. Heat Losses
             # Only hot liquid and slag radiate. Solid scrap is cold, so it does not lose heat to the walls!
@@ -108,13 +120,10 @@ class FirstPrinciplesModel(BaseEAFModel):
 
             # Net Energies for the 3 main tracked mediums
             q_net_ss = q_arc_ss + q_burn_ss + q_mm_to_ss - q_ss_to_mm
-            q_net_mm = q_arc_mm + q_burn_mm + q_chem_mm - q_mm_to_ss + q_ss_to_mm - q_loss_mm
-            q_net_slag = q_arc_slag + q_burn_slag + q_chem_slag - q_loss_slag - q_flux_sink
+            q_net_mm = q_arc_mm + q_burn_mm + q_chem_mm - q_mm_to_ss + q_ss_to_mm - q_loss_mm - q_mm_to_slag
+            q_net_slag = q_arc_slag + q_burn_slag + q_chem_slag - q_loss_slag - q_flux_sink + q_mm_to_slag
 
             # 6. Apply Heat & Phase Changes
-            cp_sol = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
-            cp_liq = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
-
             melt_rate = 0.0
             region = "liquid_superheat"
             q_melt_actual = 0.0
