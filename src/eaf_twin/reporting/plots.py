@@ -64,8 +64,6 @@ def plot_core(df: pd.DataFrame, out_dir: Path, scenario: str, model_name: str) -
     ax.plot(t, solid_metal, label="Remaining Solid Scrap", color="tab:blue", linewidth=1.8)
     ax.plot(t, df["liquid_steel_kg"], label="Liquid Steel Bath", color="tab:orange", linewidth=1.8)
     
-    # Mark charging lines explicitly in the legend for this plot
-    ax.axvline(x=-100, color="grey", linestyle="--", label="Bucket Charge Added") 
     
     format_plot(ax, "Metal phase masses", "Mass [kg]")
     ax.legend(loc="center right")
