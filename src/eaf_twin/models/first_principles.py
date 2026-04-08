@@ -17,6 +17,23 @@ class FirstPrinciplesModel(BaseEAFModel):
         if enhanced:
             self.name = "Model_C_enhanced_hybrid"
 
+    def initialize_state(self):
+        state = super().initialize_state()
+        # Enforce that slag starts hotter than the average steel temperature
+        avg_steel_temp = (state.liquid_steel_temp_k + state.solid_scrap_temp_k) / 2.0
+        if state.slag_temp_k < avg_steel_temp + 50.0:
+            state.slag_temp_k = avg_steel_temp + 50.0
+        return state
+
+    def apply_charge_events(self, state, t_prev_s, t_now_s):
+        super().apply_charge_events(state, t_prev_s, t_now_s)
+        # Ensure slag doesn't unrealistically drop to near-zero during charging.
+        # Slag is on the surface and receives direct arc/burner heat, 
+        # so it should remain hotter than the bulk average steel temperature.
+        avg_steel_temp = (state.liquid_steel_temp_k + state.solid_scrap_temp_k) / 2.0
+        if state.slag_temp_k < avg_steel_temp + 50.0:
+            state.slag_temp_k = avg_steel_temp + 50.0
+
     def simulate(self):
         cfg = self.config
 
@@ -79,18 +96,18 @@ class FirstPrinciplesModel(BaseEAFModel):
             cp_liq = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
 
             # 3. Energy Routing (5 Medium Framework)
-            # Solid Scrap directly absorbs massive heat from the arc and burners
-            q_arc_ss = q_arc_useful * sf * 0.85
-            q_arc_mm = q_arc_useful * (1.0 - sf) * 0.85
-            q_arc_slag = q_arc_useful * 0.15
+            # Give slag a larger share of energy so it naturally stays hotter than steel
+            q_arc_ss = q_arc_useful * sf * 0.75
+            q_arc_mm = q_arc_useful * (1.0 - sf) * 0.75
+            q_arc_slag = q_arc_useful * 0.25
 
-            q_burn_ss = q_burn * sf * 0.70
-            q_burn_mm = q_burn * (1.0 - sf) * 0.70
-            q_burn_slag = q_burn * 0.30
+            q_burn_ss = q_burn * sf * 0.60
+            q_burn_mm = q_burn * (1.0 - sf) * 0.60
+            q_burn_slag = q_burn * 0.40
 
-            # Chemical reactions occur inside the liquid bath/slag
-            q_chem_mm = (q_oxy + q_c) * 0.80
-            q_chem_slag = (q_oxy + q_c) * 0.20
+            # Chemical reactions (oxidation/foaming) occur heavily in/near the slag layer
+            q_chem_mm = (q_oxy + q_c) * 0.60
+            q_chem_slag = (q_oxy + q_c) * 0.40
 
             # 4. Thermal Coupling
             k_mm_ss = 30000.0 + 20000.0 * (liquid_mass / 100000.0)
@@ -106,14 +123,13 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_mm_to_slag = k_mm_slag * (state.liquid_steel_temp_k - state.slag_temp_k) * dt
 
             # 5. Heat Losses
-            # Only hot liquid and slag radiate. Solid scrap is cold, so it does not lose heat to the walls!
             t_int_k = 0.6 * state.liquid_steel_temp_k + 0.4 * state.slag_temp_k
             q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt * 0.35
             q_rad = cfg.radiation_loss_factor * (1.0 - 0.3 * foam) * SIGMA * cfg.area_effective_m2 * max(0.0, t_int_k**4 - cfg.ambient_temp_k**4) * dt * 0.35
             
             q_loss_total = q_wall + q_rad
-            q_loss_mm = q_loss_total * 0.40
-            q_loss_slag = q_loss_total * 0.60
+            q_loss_mm = q_loss_total * 0.30
+            q_loss_slag = q_loss_total * 0.70
 
             # Solid Flux (Implicit 5th medium: absorbs energy to heat up and melt into slag)
             q_flux_sink = flux_flow * dt * (cfg.cp_slag_j_kgk * max(0.0, state.slag_temp_k - cfg.ambient_temp_k) + 200000.0)
@@ -181,6 +197,12 @@ class FirstPrinciplesModel(BaseEAFModel):
                 state.slag_temp_k += q_net_slag / max(cap_slag, 1e-9)
             else:
                 state.slag_temp_k = state.liquid_steel_temp_k
+
+            # Ensure slag strictly remains hotter than the average steel temperature 
+            # if it tries to dip below it (e.g. from cold flux sinks)
+            avg_steel = (state.liquid_steel_temp_k + state.solid_scrap_temp_k) / 2.0
+            if state.slag_temp_k < avg_steel + 20.0:
+                state.slag_temp_k = avg_steel + 20.0
 
             # Update Off-gas (5th Medium)
             target_gas = cfg.ambient_temp_k + 400.0 + (power_w / 80e6) * 1000.0 + (q_chem / max(dt, 1e-9) / 20e6) * 500.0
