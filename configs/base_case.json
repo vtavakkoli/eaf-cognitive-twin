@@ -43,60 +43,68 @@
   "max_offgas_temp_c": 2200.0,
   "stage_windows": [
     {
-      "start_min": 0,
-      "end_min": 8,
-      "power_mw": 45,
-      "oxygen_nm3_min": 35,
-      "ng_nm3_min": 22,
-      "carbon_kg_min": 10,
-      "flux_kg_min": 80
+      "start_min": 0, "end_min": 0.5, "power_mw": 45, "oxygen_nm3_min": 20, "ng_nm3_min": 15, "carbon_kg_min": 5, "flux_kg_min": 50
     },
     {
-      "start_min": 8,
-      "end_min": 32,
-      "power_mw": 78,
-      "oxygen_nm3_min": 70,
-      "ng_nm3_min": 16,
-      "carbon_kg_min": 20,
-      "flux_kg_min": 140
+      "start_min": 0.5, "end_min": 1.5, "power_mw": 55, "oxygen_nm3_min": 35, "ng_nm3_min": 22, "carbon_kg_min": 10, "flux_kg_min": 80
     },
     {
-      "start_min": 32,
-      "end_min": 50,
-      "power_mw": 62,
-      "oxygen_nm3_min": 60,
-      "ng_nm3_min": 9,
-      "carbon_kg_min": 15,
-      "flux_kg_min": 120
+      "start_min": 1.5, "end_min": 2.5, "power_mw": 65, "oxygen_nm3_min": 50, "ng_nm3_min": 20, "carbon_kg_min": 15, "flux_kg_min": 100
     },
     {
-      "start_min": 50,
-      "end_min": 60,
-      "power_mw": 50,
-      "oxygen_nm3_min": 40,
-      "ng_nm3_min": 4,
-      "carbon_kg_min": 6,
-      "flux_kg_min": 60
+      "start_min": 2.5, "end_min": 16.6, "power_mw": 78, "oxygen_nm3_min": 70, "ng_nm3_min": 16, "carbon_kg_min": 20, "flux_kg_min": 140
     },
     {
-      "start_min": 60,
-      "end_min": 65,
-      "power_mw": 20,
-      "oxygen_nm3_min": 10,
-      "ng_nm3_min": 2,
-      "carbon_kg_min": 0,
-      "flux_kg_min": 0
+      "start_min": 16.6, "end_min": 21.6, "power_mw": 0, "oxygen_nm3_min": 0, "ng_nm3_min": 0, "carbon_kg_min": 0, "flux_kg_min": 0
+    },
+    {
+      "start_min": 21.6, "end_min": 22.1, "power_mw": 45, "oxygen_nm3_min": 20, "ng_nm3_min": 15, "carbon_kg_min": 5, "flux_kg_min": 20
+    },
+    {
+      "start_min": 22.1, "end_min": 23.1, "power_mw": 55, "oxygen_nm3_min": 35, "ng_nm3_min": 22, "carbon_kg_min": 10, "flux_kg_min": 40
+    },
+    {
+      "start_min": 23.1, "end_min": 24.1, "power_mw": 65, "oxygen_nm3_min": 50, "ng_nm3_min": 20, "carbon_kg_min": 15, "flux_kg_min": 60
+    },
+    {
+      "start_min": 24.1, "end_min": 31.6, "power_mw": 78, "oxygen_nm3_min": 70, "ng_nm3_min": 16, "carbon_kg_min": 20, "flux_kg_min": 100
+    },
+    {
+      "start_min": 31.6, "end_min": 36.6, "power_mw": 0, "oxygen_nm3_min": 0, "ng_nm3_min": 0, "carbon_kg_min": 0, "flux_kg_min": 0
+    },
+    {
+      "start_min": 36.6, "end_min": 37.1, "power_mw": 45, "oxygen_nm3_min": 20, "ng_nm3_min": 15, "carbon_kg_min": 5, "flux_kg_min": 10
+    },
+    {
+      "start_min": 37.1, "end_min": 38.1, "power_mw": 55, "oxygen_nm3_min": 35, "ng_nm3_min": 22, "carbon_kg_min": 10, "flux_kg_min": 20
+    },
+    {
+      "start_min": 38.1, "end_min": 39.1, "power_mw": 65, "oxygen_nm3_min": 50, "ng_nm3_min": 20, "carbon_kg_min": 15, "flux_kg_min": 30
+    },
+    {
+      "start_min": 39.1, "end_min": 55.0, "power_mw": 78, "oxygen_nm3_min": 70, "ng_nm3_min": 16, "carbon_kg_min": 20, "flux_kg_min": 40
+    },
+    {
+      "start_min": 55.0, "end_min": 60.0, "power_mw": 50, "oxygen_nm3_min": 40, "ng_nm3_min": 4, "carbon_kg_min": 6, "flux_kg_min": 0
+    },
+    {
+      "start_min": 60.0, "end_min": 65.0, "power_mw": 20, "oxygen_nm3_min": 10, "ng_nm3_min": 2, "carbon_kg_min": 0, "flux_kg_min": 0
     }
   ],
   "charge_events": [
     {
       "time_min": 0.0,
-      "scrap_kg": 60899.99999999999,
+      "scrap_kg": 40000.0,
       "dri_kg": 0.0
     },
     {
-      "time_min": 9.0,
-      "scrap_kg": 44100.00000000001,
+      "time_min": 18.0,
+      "scrap_kg": 35000.0,
+      "dri_kg": 0.0
+    },
+    {
+      "time_min": 34.0,
+      "scrap_kg": 30000.0,
       "dri_kg": 0.0
     }
   ],
