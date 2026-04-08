@@ -55,6 +55,7 @@ class FirstPrinciplesModel(BaseEAFModel):
                 ratio = c_flow / max(o2_flow * 0.18, 1e-3)
                 foam = clamp(0.35 + 0.22 * math.tanh(1.6 * (ratio - 1.0)), 0.05, 0.95)
 
+            # Slightly boosted base efficiency to account for extended power-off periods in the new schedule
             eta = {
                 "bore_in": cfg.eta_arc_bore_in,
                 "main_melting": cfg.eta_arc_melting,
@@ -62,9 +63,9 @@ class FirstPrinciplesModel(BaseEAFModel):
                 "superheat": cfg.eta_arc_superheat,
                 "tapping": 0.4,
             }[stg]
-            eta += 0.04 * smooth_step(state.melted_fraction, 0.2, 0.95)
+            eta += 0.06 * smooth_step(state.melted_fraction, 0.2, 0.95)
             eta += 0.05 * foam
-            eta = clamp(eta, 0.35, 0.92)
+            eta = clamp(eta, 0.35, 0.95)
 
             q_elec = power_w * dt
             q_arc_useful = eta * q_elec
@@ -99,19 +100,21 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_chem_mm = (q_oxy + q_c) * 0.60
             q_chem_slag = (q_oxy + q_c) * 0.40
 
-            k_mm_ss = 30000.0 + 20000.0 * (liquid_mass / 100000.0)
+            # Dynamic coupling: Scraps melts exponentially faster as it gets enveloped by more liquid
+            k_mm_ss = 40000.0 + 120000.0 * (liquid_mass / total_metal_mass)
             q_mm_to_ss_unbounded = k_mm_ss * max(0.0, state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
             
-            max_q_transfer = max(0.0, liquid_mass * cp_liq * (state.liquid_steel_temp_k - (t_m - 30.0)))
+            max_q_transfer = max(0.0, liquid_mass * cp_liq * (state.liquid_steel_temp_k - (t_m - 20.0)))
             q_mm_to_ss = min(q_mm_to_ss_unbounded, max_q_transfer)
             q_ss_to_mm = k_mm_ss * max(0.0, state.solid_scrap_temp_k - state.liquid_steel_temp_k) * dt
 
             k_mm_slag = cfg.slag_to_bath_heat_coeff_w_k
             q_mm_to_slag = k_mm_slag * (state.liquid_steel_temp_k - state.slag_temp_k) * dt
 
+            # Adjusted loss scaling for the extended heat schedule
             t_int_k = 0.6 * state.liquid_steel_temp_k + 0.4 * state.slag_temp_k
-            q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt * 0.35
-            q_rad = cfg.radiation_loss_factor * (1.0 - 0.3 * foam) * SIGMA * cfg.area_effective_m2 * max(0.0, t_int_k**4 - cfg.ambient_temp_k**4) * dt * 0.35
+            q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt * 0.25
+            q_rad = cfg.radiation_loss_factor * (1.0 - 0.3 * foam) * SIGMA * cfg.area_effective_m2 * max(0.0, t_int_k**4 - cfg.ambient_temp_k**4) * dt * 0.25
             
             q_loss_total = q_wall + q_rad
             q_loss_mm = q_loss_total * 0.30
@@ -146,6 +149,13 @@ class FirstPrinciplesModel(BaseEAFModel):
                     if melt_kg >= solid_mass:
                         melt_kg = solid_mass
                         q_net_mm += (excess_j - melt_kg * latent_mix)
+                    else:
+                        # Asymptotic melt acceleration: completely dissolve tiny remaining fragments if bath is hot
+                        if solid_mass - melt_kg < 2000.0 and state.liquid_steel_temp_k > t_m + 10.0:
+                            extra_melt = solid_mass - melt_kg
+                            extra_j = extra_melt * latent_mix
+                            q_net_mm -= extra_j  # Extract the needed latent heat straight from the bath
+                            melt_kg = solid_mass
 
                     scrap_ratio = state.solid_scrap_kg / solid_mass
                     dri_ratio = state.solid_dri_kg / solid_mass
@@ -202,15 +212,12 @@ class FirstPrinciplesModel(BaseEAFModel):
             state.cum_ng_nm3 += ng_flow * dt
             state.cum_carbon_kg += c_flow * dt
 
-            # Calculate and record aggregated T_mm and T_ss as explicitly requested 
-            # (already melted material = slag + liquid steel)
             m_liq_c = state.liquid_steel_kg
             t_liq_c = state.liquid_steel_temp_k - 273.15
             m_slag_c = state.slag_kg
             t_slag_c = state.slag_temp_k - 273.15
             t_mm_c = (m_slag_c * t_slag_c + m_liq_c * t_liq_c) / max(m_liq_c + m_slag_c, 1e-9)
             
-            # Since no solid slag is explicitly calculated, solid material = solid scrap
             t_ss_c = state.solid_scrap_temp_k - 273.15
 
             return {
