@@ -55,7 +55,6 @@ class FirstPrinciplesModel(BaseEAFModel):
                 ratio = c_flow / max(o2_flow * 0.18, 1e-3)
                 foam = clamp(0.35 + 0.22 * math.tanh(1.6 * (ratio - 1.0)), 0.05, 0.95)
 
-            # Slightly boosted base efficiency to account for extended power-off periods in the new schedule
             eta = {
                 "bore_in": cfg.eta_arc_bore_in,
                 "main_melting": cfg.eta_arc_melting,
@@ -63,9 +62,9 @@ class FirstPrinciplesModel(BaseEAFModel):
                 "superheat": cfg.eta_arc_superheat,
                 "tapping": 0.4,
             }[stg]
-            eta += 0.06 * smooth_step(state.melted_fraction, 0.2, 0.95)
+            eta += 0.04 * smooth_step(state.melted_fraction, 0.2, 0.95)
             eta += 0.05 * foam
-            eta = clamp(eta, 0.35, 0.95)
+            eta = clamp(eta, 0.35, 0.92)
 
             q_elec = power_w * dt
             q_arc_useful = eta * q_elec
@@ -100,21 +99,19 @@ class FirstPrinciplesModel(BaseEAFModel):
             q_chem_mm = (q_oxy + q_c) * 0.60
             q_chem_slag = (q_oxy + q_c) * 0.40
 
-            # Dynamic coupling: Scraps melts exponentially faster as it gets enveloped by more liquid
-            k_mm_ss = 40000.0 + 120000.0 * (liquid_mass / total_metal_mass)
+            k_mm_ss = 30000.0 + 20000.0 * (liquid_mass / 100000.0)
             q_mm_to_ss_unbounded = k_mm_ss * max(0.0, state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
             
-            max_q_transfer = max(0.0, liquid_mass * cp_liq * (state.liquid_steel_temp_k - (t_m - 20.0)))
+            max_q_transfer = max(0.0, liquid_mass * cp_liq * (state.liquid_steel_temp_k - (t_m - 30.0)))
             q_mm_to_ss = min(q_mm_to_ss_unbounded, max_q_transfer)
             q_ss_to_mm = k_mm_ss * max(0.0, state.solid_scrap_temp_k - state.liquid_steel_temp_k) * dt
 
             k_mm_slag = cfg.slag_to_bath_heat_coeff_w_k
             q_mm_to_slag = k_mm_slag * (state.liquid_steel_temp_k - state.slag_temp_k) * dt
 
-            # Adjusted loss scaling for the extended heat schedule
             t_int_k = 0.6 * state.liquid_steel_temp_k + 0.4 * state.slag_temp_k
-            q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt * 0.25
-            q_rad = cfg.radiation_loss_factor * (1.0 - 0.3 * foam) * SIGMA * cfg.area_effective_m2 * max(0.0, t_int_k**4 - cfg.ambient_temp_k**4) * dt * 0.25
+            q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt * 0.35
+            q_rad = cfg.radiation_loss_factor * (1.0 - 0.3 * foam) * SIGMA * cfg.area_effective_m2 * max(0.0, t_int_k**4 - cfg.ambient_temp_k**4) * dt * 0.35
             
             q_loss_total = q_wall + q_rad
             q_loss_mm = q_loss_total * 0.30
@@ -122,7 +119,10 @@ class FirstPrinciplesModel(BaseEAFModel):
 
             q_flux_sink = flux_flow * dt * (cfg.cp_slag_j_kgk * max(0.0, state.slag_temp_k - cfg.ambient_temp_k) + 200000.0)
 
-            q_net_ss = q_arc_ss + q_burn_ss + q_mm_to_ss - q_ss_to_mm
+            # Route high-grade heat directly to surface melting instead of uniformly heating the bulk
+            q_direct_melt = (q_arc_ss + q_burn_ss) * 0.85 + q_mm_to_ss
+            q_bulk_heat = (q_arc_ss + q_burn_ss) * 0.15 - q_ss_to_mm
+            
             q_net_mm = q_arc_mm + q_burn_mm + q_chem_mm - q_mm_to_ss + q_ss_to_mm - q_loss_mm - q_mm_to_slag
             q_net_slag = q_arc_slag + q_burn_slag + q_chem_slag - q_loss_slag - q_flux_sink + q_mm_to_slag
 
@@ -130,33 +130,38 @@ class FirstPrinciplesModel(BaseEAFModel):
             region = "liquid_superheat"
             q_melt_actual = 0.0
 
+            # Heat Solid Scrap and perform Localized Surface Melting
             if solid_mass > 1e-6:
-                region = "solid_heating"
+                region = "localized_melting"
+                
+                # 1. Bulk Heating
                 cap_ss = solid_mass * cp_sol
-                state.solid_scrap_temp_k += q_net_ss / max(cap_ss, 1e-9)
+                state.solid_scrap_temp_k += q_bulk_heat / max(cap_ss, 1e-9)
 
+                # 2. Localized Surface Melting (Continuous melting from outside in)
+                latent_scrap = cfg.latent_heat_steel_j_kg
+                latent_dri = cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
+                latent_mix = (state.solid_scrap_kg * latent_scrap + state.solid_dri_kg * latent_dri) / max(solid_mass, 1e-9)
+                
+                sensible_to_melt = max(0.0, t_m - state.solid_scrap_temp_k) * cp_sol
+                h_melt_req = sensible_to_melt + latent_mix
+                
+                melt_kg = q_direct_melt / max(h_melt_req, 1e-9)
+                
+                # 3. Check for bulk phase change (if bulk temp > T_m)
                 if state.solid_scrap_temp_k > t_m:
-                    region = "phase_change"
-                    excess_j = (state.solid_scrap_temp_k - t_m) * cap_ss
+                    excess_bulk_j = (state.solid_scrap_temp_k - t_m) * cap_ss
                     state.solid_scrap_temp_k = t_m
+                    melt_kg += excess_bulk_j / max(latent_mix, 1e-9)
 
-                    latent_scrap = cfg.latent_heat_steel_j_kg
-                    latent_dri = cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
-                    latent_mix = (state.solid_scrap_kg * latent_scrap + state.solid_dri_kg * latent_dri) / max(solid_mass, 1e-9)
-                    
-                    melt_kg = excess_j / max(latent_mix, 1e-9)
-                    
-                    if melt_kg >= solid_mass:
-                        melt_kg = solid_mass
-                        q_net_mm += (excess_j - melt_kg * latent_mix)
-                    else:
-                        # Asymptotic melt acceleration: completely dissolve tiny remaining fragments if bath is hot
-                        if solid_mass - melt_kg < 2000.0 and state.liquid_steel_temp_k > t_m + 10.0:
-                            extra_melt = solid_mass - melt_kg
-                            extra_j = extra_melt * latent_mix
-                            q_net_mm -= extra_j  # Extract the needed latent heat straight from the bath
-                            melt_kg = solid_mass
+                # Cap melting at available solid mass
+                if melt_kg >= solid_mass:
+                    melt_kg = solid_mass
+                    excess_j = q_direct_melt - (melt_kg * h_melt_req)
+                    if excess_j > 0:
+                        q_net_mm += excess_j # Excess heat spills into the bath
 
+                if melt_kg > 1e-6:
                     scrap_ratio = state.solid_scrap_kg / solid_mass
                     dri_ratio = state.solid_dri_kg / solid_mass
                     m_scrap = melt_kg * scrap_ratio
@@ -164,16 +169,26 @@ class FirstPrinciplesModel(BaseEAFModel):
 
                     state.solid_scrap_kg -= m_scrap
                     state.solid_dri_kg -= m_dri
-                    state.liquid_steel_kg += m_scrap + m_dri * cfg.dri_fe_metallization
+                    
+                    new_liquid_metal = m_scrap + m_dri * cfg.dri_fe_metallization
+                    
+                    if new_liquid_metal > 1e-6:
+                        # Blend the newly melted metal (dripping in at exactly T_m) into the bath
+                        current_cap = state.liquid_steel_kg * cp_liq
+                        added_cap = new_liquid_metal * cfg.cp_steel_j_kgk
+                        state.liquid_steel_temp_k = (state.liquid_steel_temp_k * current_cap + t_m * added_cap) / max(current_cap + added_cap, 1e-9)
+
+                    state.liquid_steel_kg += new_liquid_metal
                     state.slag_kg += m_dri * (1.0 - cfg.dri_fe_metallization)
                     
                     q_melt_actual = m_scrap * latent_scrap + m_dri * latent_dri
                     state.cum_latent_heat_j += q_melt_actual
                     melt_rate = melt_kg / max(dt, 1e-9)
             else:
-                q_net_mm += q_net_ss
+                q_net_mm += q_direct_melt + q_bulk_heat
                 state.solid_scrap_temp_k = state.liquid_steel_temp_k
 
+            # Update Liquid Steel
             if state.liquid_steel_kg > 1e-6:
                 cap_mm = state.liquid_steel_kg * cp_liq
                 state.liquid_steel_temp_k += q_net_mm / max(cap_mm, 1e-9)
@@ -217,7 +232,6 @@ class FirstPrinciplesModel(BaseEAFModel):
             m_slag_c = state.slag_kg
             t_slag_c = state.slag_temp_k - 273.15
             t_mm_c = (m_slag_c * t_slag_c + m_liq_c * t_liq_c) / max(m_liq_c + m_slag_c, 1e-9)
-            
             t_ss_c = state.solid_scrap_temp_k - 273.15
 
             return {
