@@ -250,7 +250,7 @@ class FirstPrinciplesModel(BaseEAFModel):
                 "q_useful_mw": (q_arc_useful + q_burn + q_oxy + q_c) / max(dt, 1e-9) / 1e6,
                 "q_melt_mw": q_melt_actual / max(dt, 1e-9) / 1e6,
                 "q_loss_mw": q_loss_total / max(dt, 1e-9) / 1e6,
-                "melt_rate_kg_s": melt_rate / max(dt, 1e-9),
+                "melt_rate_kg_s": melt_kg / max(dt, 1e-9),  # FIX: Use melt_kg instead of undefined melt_rate
                 "phase_region": region,
                 "remaining_solid_kg": state.solid_scrap_kg + state.solid_dri_kg,
                 "latent_heat_consumed_gj": state.cum_latent_heat_j / 1e9,
