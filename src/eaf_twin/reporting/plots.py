@@ -11,6 +11,27 @@ def plot_core(df: pd.DataFrame, out_dir: Path, scenario: str, model_name: str) -
     t = df["time_min"]
     paths = []
 
+    # Detect dynamic events to mark explicitly on the plots
+    charge_times = t[df["solid_scrap_kg"].diff() > 1000]
+    
+    tap_mask = df["tapped_kg_s"] > 0
+    tap_start, tap_end = None, None
+    if tap_mask.any():
+        tap_start = t[tap_mask].iloc[0]
+        tap_end = t[tap_mask].iloc[-1]
+
+    def format_plot(ax, title, ylabel):
+        ax.grid(True, alpha=0.3)
+        ax.set_xlabel("Time [min]")
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{title} ({scenario} | {model_name})")
+        
+        # Draw explicit operational events
+        for ct in charge_times:
+            ax.axvline(x=ct, color="grey", linestyle="--", linewidth=1.0, alpha=0.7)
+        if tap_start is not None and tap_end is not None:
+            ax.axvspan(tap_start, tap_end, color="red", alpha=0.1, label="Tapping Phase")
+
     def save(metric_name: str) -> Path:
         path = out_dir / f"plot_{scenario}_{metric_name}_{model_name}.png"
         plt.tight_layout()
@@ -18,106 +39,74 @@ def plot_core(df: pd.DataFrame, out_dir: Path, scenario: str, model_name: str) -
         plt.close()
         return path
 
-    # Temperature trajectories
-    plt.figure(figsize=(9, 5))
-    
-    # Extract calculated outputs
+    # 1. Temperature trajectories
+    fig, ax = plt.subplots(figsize=(9, 5))
     t_mm = df["t_mm_c"] if "t_mm_c" in df.columns else df["liquid_steel_temp_c"]
     t_ss = df["t_ss_c"] if "t_ss_c" in df.columns else df["solid_scrap_temp_c"]
 
-    # Match paper line styles exactly
-    plt.plot(t, t_mm, label="Default $T_{mm}$", color="blue", linestyle="--", linewidth=1.5)
-    plt.plot(t, t_ss, label="Default $T_{ss}$", color="red", linestyle="--", linewidth=1.5)
+    ax.plot(t, t_mm, label="Liquid & Slag Bath ($T_{mm}$)", color="blue", linewidth=1.8)
+    ax.plot(t, t_ss, label="Solid Scrap Bulk ($T_{ss}$)", color="red", linestyle="--", linewidth=1.8)
+    ax.plot(t, df["offgas_temp_c"], label="Off-gas Temp", color="green", linewidth=1.2)
     
-    # Hide the raw components from the legend if not needed, but keep them plotted faintly
-    plt.plot(t, df["slag_temp_c"], label="Slag Temp", color="orange", linewidth=1.0, alpha=0.3)
-    plt.plot(t, df["offgas_temp_c"], label="Off-gas Temp", color="green", linewidth=1.0, alpha=0.3)
-    
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.xlabel("Time [min]")
-    plt.ylabel("Temperature [°C]")
-    plt.title(f"Temperature trajectories ({scenario} | {model_name})")
+    format_plot(ax, "Temperature trajectories", "Temperature [°C]")
+    ax.legend(loc="lower right")
     paths.append(save("temperatures"))
 
-    # Melted fraction
-    plt.figure(figsize=(9, 5))
-    plt.plot(t, df["melted_fraction"], color="tab:purple")
-    plt.grid(True, alpha=0.3)
-    plt.xlabel("Time [min]")
-    plt.ylabel("Melted fraction")
-    plt.title(f"Melted fraction ({scenario} | {model_name})")
+    # 2. Melted fraction
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(t, df["melted_fraction"], color="tab:purple", linewidth=2)
+    format_plot(ax, "Melted fraction", "Fraction")
     paths.append(save("melted_fraction"))
 
-    # Remaining solid metallic charge
-    plt.figure(figsize=(9, 5))
-    plt.plot(t, df.get("remaining_solid_kg", df["solid_scrap_kg"] + df.get("solid_dri_kg", 0.0)), color="tab:red")
-    plt.grid(True, alpha=0.3)
-    plt.xlabel("Time [min]")
-    plt.ylabel("Remaining solid [kg]")
-    plt.title(f"Remaining solid metallic charge ({scenario} | {model_name})")
-    paths.append(save("remaining_solid"))
-
-    # Metal phase masses
+    # 3. Metal phase masses
+    fig, ax = plt.subplots(figsize=(9, 5))
     solid_metal = df["solid_scrap_kg"] + df.get("solid_dri_kg", 0.0)
-    plt.figure(figsize=(9, 5))
-    plt.plot(t, solid_metal, label="Solid scrap")
-    plt.plot(t, df["liquid_steel_kg"], label="Liquid steel")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.xlabel("Time [min]")
-    plt.ylabel("Mass [kg]")
-    plt.title(f"Metal phase masses ({scenario} | {model_name})")
+    ax.plot(t, solid_metal, label="Remaining Solid Scrap", color="tab:blue", linewidth=1.8)
+    ax.plot(t, df["liquid_steel_kg"], label="Liquid Steel Bath", color="tab:orange", linewidth=1.8)
+    
+    # Mark charging lines explicitly in the legend for this plot
+    ax.axvline(x=-100, color="grey", linestyle="--", label="Bucket Charge Added") 
+    
+    format_plot(ax, "Metal phase masses", "Mass [kg]")
+    ax.legend(loc="center right")
     paths.append(save("metal_masses"))
 
-    # Cumulative energies
+    # 4. Cumulative energies
+    fig, ax = plt.subplots(figsize=(9, 5))
     cum_chemical_mwh = df["cum_chemical_gj"] / 3.6
-    plt.figure(figsize=(9, 5))
-    plt.plot(t, df["cum_electric_mwh"], label="Electric [MWh]")
-    plt.plot(t, cum_chemical_mwh, label="Chemical [MWh eq]")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.xlabel("Time [min]")
-    plt.ylabel("Cumulative energy [MWh]")
-    plt.title(f"Cumulative energies ({scenario} | {model_name})")
+    ax.plot(t, df["cum_electric_mwh"], label="Electric [MWh]", linewidth=1.8)
+    ax.plot(t, cum_chemical_mwh, label="Chemical [MWh eq]", linewidth=1.8)
+    format_plot(ax, "Cumulative energies", "Energy [MWh]")
+    ax.legend()
     paths.append(save("cumulative_energy"))
 
-    # Cumulative consumables
-    plt.figure(figsize=(9, 5))
-    plt.plot(t, df["cum_oxygen_nm3"], label="Oxygen [Nm3]")
-    plt.plot(t, df["cum_ng_nm3"], label="Natural gas [Nm3]")
-    plt.plot(t, df["cum_carbon_kg"], label="Carbon [kg]")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.xlabel("Time [min]")
-    plt.ylabel("Cumulative consumption")
-    plt.title(f"Cumulative consumables ({scenario} | {model_name})")
+    # 5. Cumulative consumables
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(t, df["cum_oxygen_nm3"], label="Oxygen [Nm3]", linewidth=1.8)
+    ax.plot(t, df["cum_ng_nm3"], label="Natural gas [Nm3]", linewidth=1.8)
+    ax.plot(t, df["cum_carbon_kg"], label="Carbon [kg]", linewidth=1.8)
+    format_plot(ax, "Cumulative consumables", "Consumption")
+    ax.legend()
     paths.append(save("consumables"))
 
-    # Carbon trajectory
-    plt.figure(figsize=(9, 5))
-    plt.plot(t, df["steel_carbon_wt_pct"], color="tab:brown")
-    plt.grid(True, alpha=0.3)
-    plt.xlabel("Time [min]")
-    plt.ylabel("Steel carbon [wt%]")
-    plt.title(f"Carbon trajectory ({scenario} | {model_name})")
+    # 6. Carbon trajectory
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(t, df["steel_carbon_wt_pct"], color="tab:brown", linewidth=1.8)
+    format_plot(ax, "Carbon trajectory", "Steel carbon [wt%]")
     paths.append(save("steel_carbon"))
 
-    # Heat flow stack
-    plt.figure(figsize=(9, 5))
-    plt.stackplot(
+    # 7. Heat flow stack
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.stackplot(
         t,
         df["q_useful_mw"],
         df["q_melt_mw"],
         df["q_loss_mw"],
-        labels=["Useful in", "Melting sink", "Losses"],
+        labels=["Useful Input (Arc+Chem)", "Melting Sink", "Losses (Wall+Rad)"],
         alpha=0.85,
     )
-    plt.grid(True, alpha=0.3)
-    plt.legend(loc="upper right")
-    plt.xlabel("Time [min]")
-    plt.ylabel("Power [MW]")
-    plt.title(f"Heat flow stack ({scenario} | {model_name})")
+    format_plot(ax, "Heat flow stack", "Power [MW]")
+    ax.legend(loc="upper right")
     paths.append(save("heat_stack"))
 
     return paths
