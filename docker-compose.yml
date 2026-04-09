@@ -5,3 +5,19 @@ services:
     command: ["run", "--config", "configs/base_case.json", "--output-dir", "outputs"]
     volumes:
       - ./outputs:/app/outputs
+
+  train-agent:
+    build: .
+    image: eaf-twin:latest
+    entrypoint: ["python", "-m", "agents.runners.train_agent"]
+    command: ["--config", "configs/base_case.json", "--output-dir", "results/agent_training"]
+    volumes:
+      - ./results:/app/results
+
+  run-agent:
+    build: .
+    image: eaf-twin:latest
+    entrypoint: ["python", "-m", "agents.runners.run_agent"]
+    command: ["--config", "configs/base_case.json", "--output-dir", "results/agent_run", "--trained-policy", "results/agent_training/checkpoints/best_policy.json"]
+    volumes:
+      - ./results:/app/results
