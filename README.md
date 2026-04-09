@@ -53,6 +53,8 @@ docker compose up --build run-agent
 - `results/agent_run/statistical_analysis.csv`
 - `results/agent_run/timeseries/agent_timeseries_<scenario>_<policy>.csv`
 - `results/agent_run/plot_*_comparison.png`
+- `results/agent_run/plot_composite_policy_score.png`
+- `results/agent_run/plot_reward_heatmap.png`
 - `results/agent_run/report.md`
 - `results/agent_run/result.html`
 

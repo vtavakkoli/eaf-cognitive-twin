@@ -24,6 +24,54 @@ def _plot_summary(summary_df, output_dir: Path) -> None:
         plt.close()
 
 
+def _plot_report_visuals(summary_df: pd.DataFrame, policy_stats: pd.DataFrame, output_dir: Path) -> list[str]:
+    generated: list[str] = []
+    # 1) Composite score chart.
+    metrics = [
+        ("mean_reward", True),
+        ("mean_tapped_kg", True),
+        ("mean_electric_mwh", False),
+        ("mean_oxygen_nm3", False),
+        ("mean_ng_nm3", False),
+    ]
+    score_df = policy_stats.copy()
+    for col, higher_is_better in metrics:
+        vals = score_df[col]
+        lo, hi = float(vals.min()), float(vals.max())
+        if abs(hi - lo) < 1e-9:
+            score_df[f"{col}_norm"] = 0.5
+        elif higher_is_better:
+            score_df[f"{col}_norm"] = (vals - lo) / (hi - lo)
+        else:
+            score_df[f"{col}_norm"] = (hi - vals) / (hi - lo)
+    norm_cols = [f"{m[0]}_norm" for m in metrics]
+    score_df["composite_score"] = score_df[norm_cols].mean(axis=1)
+    ax = score_df.sort_values("composite_score", ascending=False).plot(
+        x="policy", y="composite_score", kind="bar", color="#4C78A8", legend=False, figsize=(8, 4), title="Composite policy score (higher is better)"
+    )
+    ax.set_ylabel("normalized score")
+    plt.tight_layout()
+    fname = "plot_composite_policy_score.png"
+    plt.savefig(output_dir / fname, dpi=160)
+    plt.close()
+    generated.append(fname)
+
+    # 2) Scenario heatmap (reward by policy/scenario).
+    reward_pivot = summary_df.pivot(index="scenario", columns="policy", values="total_reward")
+    plt.figure(figsize=(9, 4.5))
+    im = plt.imshow(reward_pivot.values, aspect="auto", cmap="viridis")
+    plt.colorbar(im, label="total_reward")
+    plt.xticks(range(len(reward_pivot.columns)), reward_pivot.columns, rotation=30, ha="right")
+    plt.yticks(range(len(reward_pivot.index)), reward_pivot.index)
+    plt.title("Scenario reward heatmap")
+    plt.tight_layout()
+    fname = "plot_reward_heatmap.png"
+    plt.savefig(output_dir / fname, dpi=160)
+    plt.close()
+    generated.append(fname)
+    return generated
+
+
 def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
     agg = summary_df.groupby("policy", as_index=False).agg(
         mean_reward=("total_reward", "mean"),
@@ -52,7 +100,7 @@ def _paired_stats(summary_df: pd.DataFrame, left: str, right: str, metric: str, 
     }
 
 
-def _write_result_html(summary_df: pd.DataFrame, output_dir: Path, policy_stats: pd.DataFrame, stat_rows: list[dict]) -> None:
+def _write_result_html(summary_df: pd.DataFrame, output_dir: Path, policy_stats: pd.DataFrame, stat_rows: list[dict], chart_files: list[str]) -> None:
     baseline = summary_df[summary_df["policy"] == "baseline_schedule"].copy()
     baseline = baseline.set_index("scenario")
 
@@ -80,6 +128,10 @@ def _write_result_html(summary_df: pd.DataFrame, output_dir: Path, policy_stats:
         )
     comparison_df = pd.DataFrame(comparisons)
     statistical_df = pd.DataFrame(stat_rows)
+    images_html = "".join(
+        f'<div><img src="{name}" style="max-width: 960px; width: 100%; border: 1px solid #ddd; margin-bottom: 16px;"/></div>'
+        for name in chart_files
+    )
 
     winner = policy_stats.iloc[0]["policy"] if not policy_stats.empty else "n/a"
     html = f"""
@@ -106,6 +158,8 @@ def _write_result_html(summary_df: pd.DataFrame, output_dir: Path, policy_stats:
   <h2>Statistical Analysis (paired t-tests across scenarios)</h2>
   <p>Positive mean_delta indicates better performance under the metric orientation.</p>
   {statistical_df.to_html(index=False, float_format=lambda x: f"{x:,.6f}") if not statistical_df.empty else '<p>Insufficient data for significance testing.</p>'}
+  <h2>Key visuals</h2>
+  {images_html}
 </body>
 </html>
 """
@@ -143,6 +197,7 @@ def main() -> None:
     kpi_comparison.to_csv(output_dir / "kpi_comparison.csv")
 
     _plot_summary(summary_df, output_dir)
+    chart_files = _plot_report_visuals(summary_df, policy_stats, output_dir)
     stat_rows = []
     for metric, higher_is_better in [
         ("total_reward", True),
@@ -161,7 +216,7 @@ def main() -> None:
             stat_rows.append(_paired_stats(summary_df, "mpc", "rule_based", metric, higher_is_better))
         stat_rows.append(_paired_stats(summary_df, "rule_based", "baseline_schedule", metric, higher_is_better))
     pd.DataFrame(stat_rows).to_csv(output_dir / "statistical_analysis.csv", index=False)
-    _write_result_html(summary_df, output_dir, policy_stats, stat_rows)
+    _write_result_html(summary_df, output_dir, policy_stats, stat_rows, chart_files)
 
     report_lines = [
         "# Agent Run Report",
@@ -177,6 +232,8 @@ def main() -> None:
         "- result.html",
         "- timeseries/*.csv",
         "- plot_*_comparison.png",
+        "- plot_composite_policy_score.png",
+        "- plot_reward_heatmap.png",
     ]
     (output_dir / "report.md").write_text("\n".join(report_lines))
     (output_dir / "run_manifest.json").write_text(json.dumps({"policies": list(policies.keys()), "config": str(args.config)}, indent=2))

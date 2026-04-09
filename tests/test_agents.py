@@ -66,6 +66,8 @@ class TestAgentRunners(unittest.TestCase):
             self.assertTrue((run_out / "scenario_summary.csv").exists())
             self.assertTrue((run_out / "statistical_analysis.csv").exists())
             self.assertTrue((run_out / "result.html").exists())
+            self.assertTrue((run_out / "plot_composite_policy_score.png").exists())
+            self.assertTrue((run_out / "plot_reward_heatmap.png").exists())
             summary = pd.read_csv(run_out / "scenario_summary.csv")
             policies = set(summary["policy"].unique())
             self.assertIn("baseline_schedule", policies)
