@@ -47,10 +47,13 @@ docker compose up --build run-agent
 
 ### Agent run output
 - `results/agent_run/scenario_summary.csv`
+- `results/agent_run/policy_aggregate_summary.csv`
 - `results/agent_run/kpi_comparison.csv`
+- `results/agent_run/statistical_analysis.csv`
 - `results/agent_run/timeseries/agent_timeseries_<scenario>_<policy>.csv`
 - `results/agent_run/plot_*_comparison.png`
 - `results/agent_run/report.md`
+- `results/agent_run/result.html`
 
 ## Inspecting results
 - Use `scenario_summary.csv` and `kpi_comparison.csv` for scenario-level comparisons.

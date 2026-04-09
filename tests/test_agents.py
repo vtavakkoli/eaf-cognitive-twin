@@ -63,6 +63,8 @@ class TestAgentRunners(unittest.TestCase):
                 env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
             )
             self.assertTrue((run_out / "scenario_summary.csv").exists())
+            self.assertTrue((run_out / "statistical_analysis.csv").exists())
+            self.assertTrue((run_out / "result.html").exists())
 
 
 if __name__ == "__main__":
