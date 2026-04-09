@@ -194,7 +194,7 @@ class BaseEAFModel:
     def simulate(self) -> ModelResult:
         raise NotImplementedError
 
-    def run_loop(self, step_fn):
+    def run_loop(self, step_fn, setpoint_fn=None):
         start = time.perf_counter()
         state = self.initialize_state()
         rows, warnings = [], []
@@ -202,7 +202,10 @@ class BaseEAFModel:
         for _ in range(n_steps + 1):
             state.roof_open_remaining_s = max(0.0, state.roof_open_remaining_s - self.config.dt_s)
             self.apply_charge_events(state, max(0.0, state.time_s - self.config.dt_s), state.time_s)
-            inputs = active_setpoints(self.config, state.time_s / SECONDS_PER_MIN)
+            if setpoint_fn is None:
+                inputs = active_setpoints(self.config, state.time_s / SECONDS_PER_MIN)
+            else:
+                inputs = setpoint_fn(state)
             extras = step_fn(state, inputs, warnings)
             self.validate_state(state, warnings)
             rows.append(self.record_row(state, inputs, extras))
@@ -214,9 +217,13 @@ class BaseEAFModel:
         return ModelResult(self.name, self.config.heat_name, df, self.compute_summary(df, runtime, warnings), warnings, runtime)
 
 
-def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
+def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig, tap_command: bool | None = None) -> float:
     dt = cfg.dt_s
-    ready_by_melt = state.melted_fraction >= 0.98 and state.steel_temp_k >= cfg.tap_target_temp_k
+    ready_by_melt = (
+        (state.time_s / SECONDS_PER_MIN) >= 50.0
+        and state.melted_fraction >= 0.98
+        and state.steel_temp_k >= cfg.tap_target_temp_k
+    )
     ready_by_time = (
         (state.time_s / SECONDS_PER_MIN) >= 55.0
         and state.liquid_steel_kg >= 0.92 * cfg.tap_target_steel_kg
@@ -229,7 +236,11 @@ def start_or_continue_tapping(state: FurnaceState, cfg: FurnaceConfig) -> float:
         and state.steel_temp_k >= cfg.steel_melt_temp_k - 45.0
     )
     
-    if ready_by_melt or ready_by_time or ready_by_timeout:
+    should_start = ready_by_melt or ready_by_time or ready_by_timeout
+    if tap_command is not None:
+        should_start = tap_command and should_start
+
+    if should_start:
         state.tapping_started = True
         if state.tap_start_time_s is None:
             state.tap_start_time_s = state.time_s
