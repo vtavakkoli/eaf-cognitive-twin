@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import stats
 
+from agents.policies.mpc_policy import MPCPolicy
 from agents.policies.rule_based import RuleBasedPolicy
 from agents.policies.trainable_policy import TrainablePolicy
 from agents.runners.benchmark_runner import run_benchmark
@@ -124,9 +125,10 @@ def main() -> None:
     policies = {
         "baseline_schedule": RuleBasedPolicy(),
         "rule_based": RuleBasedPolicy(),
+        "mpc": MPCPolicy(),
     }
     if args.trained_policy.exists():
-        policies["trained"] = TrainablePolicy.load(args.trained_policy)
+        policies["agentic_ai"] = TrainablePolicy.load(args.trained_policy)
 
     summary_df = run_benchmark(args.config, policies, output_dir)
     summary_df.to_csv(output_dir / "scenario_summary.csv", index=False)
@@ -149,9 +151,14 @@ def main() -> None:
         ("cum_oxygen_nm3", False),
         ("cum_ng_nm3", False),
     ]:
-        if "trained" in set(summary_df["policy"]):
-            stat_rows.append(_paired_stats(summary_df, "trained", "baseline_schedule", metric, higher_is_better))
-            stat_rows.append(_paired_stats(summary_df, "trained", "rule_based", metric, higher_is_better))
+        available_policies = set(summary_df["policy"])
+        if "agentic_ai" in available_policies:
+            stat_rows.append(_paired_stats(summary_df, "agentic_ai", "baseline_schedule", metric, higher_is_better))
+            stat_rows.append(_paired_stats(summary_df, "agentic_ai", "rule_based", metric, higher_is_better))
+            stat_rows.append(_paired_stats(summary_df, "agentic_ai", "mpc", metric, higher_is_better))
+        if "mpc" in available_policies:
+            stat_rows.append(_paired_stats(summary_df, "mpc", "baseline_schedule", metric, higher_is_better))
+            stat_rows.append(_paired_stats(summary_df, "mpc", "rule_based", metric, higher_is_better))
         stat_rows.append(_paired_stats(summary_df, "rule_based", "baseline_schedule", metric, higher_is_better))
     pd.DataFrame(stat_rows).to_csv(output_dir / "statistical_analysis.csv", index=False)
     _write_result_html(summary_df, output_dir, policy_stats, stat_rows)

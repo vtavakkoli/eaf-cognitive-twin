@@ -24,6 +24,7 @@ Run benchmark scenarios with baseline schedule, rule-based policy, and trained p
 ```bash
 python -m agents.runners.run_agent --config configs/base_case.json --output-dir results/agent_run --trained-policy results/agent_training/checkpoints/best_policy.json
 ```
+This run compares four control strategies when a trained checkpoint exists: `baseline_schedule`, `rule_based`, `mpc`, and `agentic_ai`.
 
 ## Docker Compose commands
 ```bash

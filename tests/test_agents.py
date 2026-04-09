@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import os
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -65,6 +66,12 @@ class TestAgentRunners(unittest.TestCase):
             self.assertTrue((run_out / "scenario_summary.csv").exists())
             self.assertTrue((run_out / "statistical_analysis.csv").exists())
             self.assertTrue((run_out / "result.html").exists())
+            summary = pd.read_csv(run_out / "scenario_summary.csv")
+            policies = set(summary["policy"].unique())
+            self.assertIn("baseline_schedule", policies)
+            self.assertIn("rule_based", policies)
+            self.assertIn("mpc", policies)
+            self.assertIn("agentic_ai", policies)
 
 
 if __name__ == "__main__":
