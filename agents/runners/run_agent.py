@@ -72,6 +72,56 @@ def _plot_report_visuals(summary_df: pd.DataFrame, policy_stats: pd.DataFrame, o
     return generated
 
 
+def _plot_scenario_trajectory_visuals(output_dir: Path, policies: list[str], scenarios: list[str]) -> list[str]:
+    generated: list[str] = []
+    timeseries_dir = output_dir / "timeseries"
+    if not timeseries_dir.exists():
+        return generated
+
+    for policy in policies:
+        scenario_frames: dict[str, pd.DataFrame] = {}
+        for scenario in scenarios:
+            ts_path = timeseries_dir / f"agent_timeseries_{scenario}_{policy}.csv"
+            if ts_path.exists():
+                scenario_frames[scenario] = pd.read_csv(ts_path)
+        if not scenario_frames:
+            continue
+
+        # Energy profile comparison: cumulative electric energy by scenario for one policy.
+        fig, ax = plt.subplots(figsize=(10, 5))
+        for scenario, frame in scenario_frames.items():
+            if "time_min" in frame.columns and "cum_electric_mwh" in frame.columns:
+                ax.plot(frame["time_min"], frame["cum_electric_mwh"], linewidth=1.8, label=scenario)
+        ax.set_title(f"Cumulative electric energy profile by scenario ({policy})")
+        ax.set_xlabel("Time [min]")
+        ax.set_ylabel("Cumulative electric energy [MWh]")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+        plt.tight_layout()
+        energy_name = f"plot_energy_profile_all_scenarios_{policy}.png"
+        plt.savefig(output_dir / energy_name, dpi=160)
+        plt.close()
+        generated.append(energy_name)
+
+        # Temperature trajectory comparison: bath temperature by scenario for one policy.
+        fig, ax = plt.subplots(figsize=(10, 5))
+        for scenario, frame in scenario_frames.items():
+            if "time_min" in frame.columns and "bath_temp_c" in frame.columns:
+                ax.plot(frame["time_min"], frame["bath_temp_c"], linewidth=1.8, label=scenario)
+        ax.set_title(f"Temperature trajectory by scenario ({policy})")
+        ax.set_xlabel("Time [min]")
+        ax.set_ylabel("Bath temperature [°C]")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+        plt.tight_layout()
+        temp_name = f"plot_temperature_trajectory_all_scenarios_{policy}.png"
+        plt.savefig(output_dir / temp_name, dpi=160)
+        plt.close()
+        generated.append(temp_name)
+
+    return generated
+
+
 def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
     agg = summary_df.groupby("policy", as_index=False).agg(
         mean_reward=("total_reward", "mean"),
@@ -198,6 +248,13 @@ def main() -> None:
 
     _plot_summary(summary_df, output_dir)
     chart_files = _plot_report_visuals(summary_df, policy_stats, output_dir)
+    chart_files.extend(
+        _plot_scenario_trajectory_visuals(
+            output_dir=output_dir,
+            policies=sorted(summary_df["policy"].unique()),
+            scenarios=sorted(summary_df["scenario"].unique()),
+        )
+    )
     stat_rows = []
     for metric, higher_is_better in [
         ("total_reward", True),
