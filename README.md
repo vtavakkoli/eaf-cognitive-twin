@@ -68,7 +68,12 @@ python -m agents.runners.run_agent \
 
 Docker:
 ```bash
-docker compose run --rm eaf-twin python -m agents.runners.run_agent \
+docker-compose up --build run-agent
+```
+
+Equivalent direct command:
+```bash
+python -m agents.runners.run_agent \
   --config configs/base_case.json \
   --output-dir results/agent_run \
   --seeds 30 \
@@ -76,5 +81,6 @@ docker compose run --rm eaf-twin python -m agents.runners.run_agent \
   --model C \
   --max-steps 650 \
   --mpc-horizon 8 \
-  --include-rl-baselines
+  --include-rl-baselines \
+  --report-format html,csv,md
 ```

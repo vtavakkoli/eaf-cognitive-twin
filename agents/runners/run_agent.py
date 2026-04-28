@@ -264,11 +264,29 @@ def _render_html(
     }
     kpi_cards = "".join([f"<div class='kpi-card'><div class='kpi-title'>{k}</div><div class='kpi-value'>{v}</div></div>" for k, v in kpis.items()])
 
+    key_policies = ["ppo", "q_learning", "dqn", "mpc", "safe_ppo_agentic_mpc"]
+    key_coverage = policy_coverage[policy_coverage["policy"].isin(key_policies)].copy()
+    figure_labels = {
+        "reward_mean_std.png": "Figure 1. Mean reward by evaluated policy",
+        "tap_success_rate.png": "Figure 2. Tap success rate by evaluated policy",
+        "energy_per_ton.png": "Figure 3. Energy per ton by evaluated policy",
+        "violation_count.png": "Figure 4. Violation count by evaluated policy",
+        "normalized_score_ranking.png": "Figure 5. Normalized score by evaluated policy",
+        "scenario_policy_heatmap.png": "Figure 6. Scenario-policy normalized score heatmap",
+        "pareto_reward_vs_energy_per_ton.png": "Figure 7. Pareto frontier: reward vs energy per ton",
+        "temperature_trajectory_comparison.png": "Figure 8. Base case temperature trajectories (seed 0)",
+    }
+    figures_html = "".join(
+        [
+            f"<div><img src='figures/{f}'><div style='font-size:12px;color:#42526e;margin-bottom:10px'>{figure_labels.get(f, f)}</div></div>"
+            for f in figures
+        ]
+    )
     html = f"""
 <html>
 <head>
 <meta charset='utf-8'>
-<title>EAF Benchmark Report: PPO, Q-Learning, DQN, and Proposed Safe PPO-Agentic MPC</title>
+<title>EAF Benchmar Report: PPO, Q-Learning, DQN, MPC, and Proposed Safe PPO-Agentic MPC</title>
 <style>
 body {{ font-family: Inter, Arial, sans-serif; margin: 24px; background: #f5f7fb; color: #1a1f36; }}
 .panel {{ background: #fff; border-radius: 12px; padding: 18px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
@@ -286,20 +304,21 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 </head>
 <body>
 <div class='panel'>
-<h1>EAF Benchmark: PPO, Q-Learning, DQN, MPC, and <span class='proposed'>Proposed Safe PPO-Agentic MPC</span></h1>
+<h1>EAF Benchmar: PPO, Q-Learning, DQN, MPC, and <span class='proposed'>Proposed Safe PPO-Agentic MPC</span></h1>
 <p>All policies are evaluated on Model C enhanced hybrid simulator.</p>
 <p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes.</p>
 <p>Policies: {policy_list}</p>
 </div>
 <div class='panel'><h2>KPI Cards</h2><div class='kpi-grid'>{kpi_cards}</div></div>
 <div class='panel'><h2>Policy Coverage</h2>{_format_table(policy_coverage)}</div>
+<div class='panel'><h2>Key Policy Coverage (PPO, Q-Learning, DQN, MPC, Proposed Safe PPO-Agentic MPC)</h2>{_format_table(key_coverage)}</div>
 <div class='panel warning'><h2>Diagnostic Warnings</h2><ul>{warning_html}</ul></div>
 <div class='panel'><h2>Main result table (mean ± std)</h2>{_format_table(policy_stats)}</div>
 <div class='panel'><h2>Scenario-level ranking table</h2>{_format_table(scenario_rank)}</div>
 <div class='panel'><h2>Baseline comparison table</h2>{_format_table(comparison_df)}</div>
 <div class='panel'><h2>Statistical significance table</h2>{_format_table(stat_tests)}</div>
 <div class='panel'><h2>Best policy decision</h2><p>Best policy by normalized_score: <b>{_display_name(str(best['policy']))}</b> (score={best['normalized_score']:.4f}).</p></div>
-<div class='panel'><h2>Figures</h2>{''.join([f"<div><img src='figures/{f}'></div>" for f in figures])}</div>
+<div class='panel'><h2>Figures (all evaluated policies)</h2>{figures_html}</div>
 </body>
 </html>
 """
