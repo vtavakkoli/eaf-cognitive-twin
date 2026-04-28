@@ -7,6 +7,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from eaf_twin.config.loader import load_config
+
 from agents.policies.baseline_schedule import IndustrialBaselineSchedulePolicy
 from agents.policies.mpc_policy import MPCPolicy
 from agents.policies.rule_based import RuleBasedPolicy
@@ -47,7 +49,51 @@ def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path) -> list[str]:
+def _plot_temperature_trajectories(output_dir: Path, scenarios: list[str]) -> list[str]:
+    fig_dir = output_dir / "figures"
+    ts_dir = output_dir / "timeseries"
+    files: list[str] = []
+
+    for scenario in scenarios:
+        scenario_frames: list[pd.DataFrame] = []
+        pattern = f"agent_timeseries_{scenario}_*_seed*.csv"
+        for ts_path in sorted(ts_dir.glob(pattern)):
+            stem = ts_path.stem
+            prefix = f"agent_timeseries_{scenario}_"
+            if not stem.startswith(prefix) or "_seed" not in stem:
+                continue
+            policy_name = stem[len(prefix) : stem.rfind("_seed")]
+            ts_df = pd.read_csv(ts_path)
+            if "time_min" not in ts_df.columns or "bath_temp_c" not in ts_df.columns:
+                continue
+            scenario_frames.append(ts_df[["time_min", "bath_temp_c"]].assign(policy=policy_name))
+
+        if not scenario_frames:
+            continue
+
+        merged = pd.concat(scenario_frames, ignore_index=True)
+        curve_df = (
+            merged.groupby(["policy", "time_min"], as_index=False)["bath_temp_c"]
+            .mean()
+            .sort_values(["policy", "time_min"])
+        )
+        plt.figure(figsize=(9.5, 4.5))
+        for policy_name, policy_df in curve_df.groupby("policy"):
+            plt.plot(policy_df["time_min"], policy_df["bath_temp_c"], label=policy_name, linewidth=2)
+        plt.xlabel("time_min")
+        plt.ylabel("bath_temp_c")
+        plt.title(f"Temperature trajectory by policy ({scenario})")
+        plt.legend()
+        plt.tight_layout()
+        figure_name = f"temperature_trajectory_{scenario}.png"
+        plt.savefig(fig_dir / figure_name, dpi=160)
+        plt.close()
+        files.append(figure_name)
+
+    return files
+
+
+def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, scenarios: list[str]) -> list[str]:
     fig_dir = output_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
     files: list[str] = []
@@ -122,6 +168,8 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path) -> list[str]:
     plt.savefig(fig_dir / fname, dpi=160)
     plt.close()
     files.append(fname)
+
+    files.extend(_plot_temperature_trajectories(output_dir, scenarios))
 
     return files
 
@@ -251,7 +299,7 @@ def main() -> None:
     stat_df = summary_df.groupby("policy", as_index=False).agg(mean=("total_reward", "mean"), std=("total_reward", "std"), median=("total_reward", "median"), min=("total_reward", "min"), max=("total_reward", "max"))
     stat_df.to_csv(output_dir / "statistical_analysis.csv", index=False)
 
-    figures = _plot_all_figures(summary_df, output_dir)
+    figures = _plot_all_figures(summary_df, output_dir, scenario_order)
     _render_html(output_dir, summary_df, policy_stats, comparison_df, len(seeds), len(scenario_order), figures)
 
     report_lines = [
@@ -265,7 +313,20 @@ def main() -> None:
         scen = summary_df[summary_df["scenario"] == scenario].sort_values("total_reward", ascending=False)
         report_lines.extend([f"### {scenario}", scen.to_csv(index=False), ""])
     (output_dir / "report.md").write_text("\n".join(report_lines))
-    (output_dir / "run_manifest.json").write_text(json.dumps({"policies": list(policies.keys()), "config": str(args.config), "model_name": "Model_C_enhanced_hybrid", "max_steps": 600}, indent=2))
+    dt_s = float(load_config(args.config).dt_s)
+    max_steps = max(1, int((55.0 * 60.0) / max(dt_s, 1e-9)))
+    (output_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "policies": list(policies.keys()),
+                "config": str(args.config),
+                "model_name": "Model_C_enhanced_hybrid",
+                "max_simulation_minutes": 55.0,
+                "max_steps": max_steps,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

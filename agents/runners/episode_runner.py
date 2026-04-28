@@ -16,7 +16,16 @@ class EpisodeOutcome:
     final_tapped_kg: float
 
 
-def run_episode(controller: EAFController, policy: BasePolicy, policy_name: str, max_steps: int = 600) -> EpisodeOutcome:
+def run_episode(
+    controller: EAFController,
+    policy: BasePolicy,
+    policy_name: str,
+    max_steps: int | None = None,
+    max_minutes: float = 55.0,
+) -> EpisodeOutcome:
+    if max_steps is None:
+        dt_s = float(getattr(controller.config, "dt_s", 1.0))
+        max_steps = max(1, int((max_minutes * 60.0) / max(dt_s, 1e-9)))
     obs = controller.reset()
     policy.reset()
     rows = []
