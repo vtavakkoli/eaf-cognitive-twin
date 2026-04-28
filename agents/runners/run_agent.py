@@ -265,7 +265,16 @@ def _render_html(
     kpi_cards = "".join([f"<div class='kpi-card'><div class='kpi-title'>{k}</div><div class='kpi-value'>{v}</div></div>" for k, v in kpis.items()])
 
     key_policies = ["ppo", "q_learning", "dqn", "mpc", "safe_ppo_agentic_mpc"]
-    key_coverage = policy_coverage[policy_coverage["policy"].isin(key_policies)].copy()
+    key_coverage = (
+        policy_coverage.set_index("policy")
+        .reindex(key_policies)
+        .reset_index()
+    )
+    key_coverage["display_name"] = key_coverage["policy"].map(_display_name)
+    for col in ["episodes", "scenarios", "seeds"]:
+        key_coverage[col] = key_coverage[col].fillna(0).astype(int)
+    key_coverage["tap_success_rate"] = pd.to_numeric(key_coverage["tap_success_rate"], errors="coerce")
+    key_coverage["included_in_all_outputs"] = key_coverage["included_in_all_outputs"].fillna(False).astype(bool)
     figure_labels = {
         "reward_mean_std.png": "Figure 1. Mean reward by evaluated policy",
         "tap_success_rate.png": "Figure 2. Tap success rate by evaluated policy",
