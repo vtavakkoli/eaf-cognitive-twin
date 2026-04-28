@@ -10,7 +10,7 @@ All policies are evaluated on the same enhanced hybrid first-principles simulato
 - `baseline_schedule`
 - `rule_based`
 - `mpc`
-- `agentic_ai`
+- `trainable_adaptive_controller`
 - `q_learning`
 - `dqn`
 - `ppo`
