@@ -50,6 +50,9 @@ class FurnaceConfig:
     initial_heel_slag_kg: float = 0.0
     initial_heel_slag_temp_c: float = 1600.0
     tap_target_temp_c: float = 1645.0
+    tap_min_temp_c: float = 1600.0
+    max_heat_time_min: float = 65.0
+    tap_mass_tolerance: float = 0.95
 
     cp_steel_j_kgk: float = 820.0
     cp_slag_j_kgk: float = 1000.0
