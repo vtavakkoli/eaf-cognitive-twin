@@ -218,7 +218,16 @@ class TestAgentRunners(unittest.TestCase):
             self.assertIn("DQN", html)
             self.assertIn("PPO", html)
             self.assertIn("Proposed Safe PPO-Agentic MPC", html)
-            for policy in ["ppo", "q_learning", "dqn", "safe_ppo_agentic_mpc"]:
+            expected_rl = [
+                "ppo",
+                "q_learning",
+                "dqn",
+                "behavior_cloning",
+                "sac_inspired",
+                "td3_inspired",
+                "safe_ppo_agentic_mpc",
+            ]
+            for policy in expected_rl:
                 self.assertIn(policy, summary["policy"].unique().tolist())
             cov = pd.read_csv(out / "policy_coverage.csv")
             self.assertTrue((out / "policy_coverage.csv").exists())
@@ -226,6 +235,9 @@ class TestAgentRunners(unittest.TestCase):
             manifest = json.loads((out / "run_manifest.json").read_text())
             self.assertIn("evaluated_policies", manifest)
             self.assertEqual(sorted(manifest["evaluated_policies"]), sorted(summary["policy"].unique().tolist()))
+            for policy in expected_rl:
+                self.assertIn(policy, manifest["evaluated_policies"])
+                self.assertIn(policy, cov["policy"].unique().tolist())
 
 
 if __name__ == "__main__":

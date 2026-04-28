@@ -18,6 +18,6 @@ services:
     build: .
     image: eaf-twin:latest
     entrypoint: ["python", "-m", "agents.runners.run_agent"]
-    command: ["--config", "configs/base_case.json", "--output-dir", "results/agent_run", "--trained-policy", "results/agent_training/checkpoints/best_policy.json"]
+    command: ["--config", "configs/base_case.json", "--output-dir", "results/agent_run", "--trained-policy", "results/agent_training/checkpoints/best_policy.json", "--seeds", "30", "--n-scenarios", "6", "--model", "C", "--max-steps", "650", "--mpc-horizon", "8", "--include-rl-baselines", "--allow-missing-rl-baselines"]
     volumes:
       - ./results:/app/results

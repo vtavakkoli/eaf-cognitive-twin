@@ -288,7 +288,7 @@ def _render_html(
 <html>
 <head>
 <meta charset='utf-8'>
-<title>EAF Benchmark Report</title>
+<title>EAF Benchmark Report ({policy_list})</title>
 <style>
 body {{ font-family: Inter, Arial, sans-serif; margin: 24px; background: #f5f7fb; color: #1a1f36; }}
 .panel {{ background: #fff; border-radius: 12px; padding: 18px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
@@ -306,7 +306,7 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 </head>
 <body>
 <div class='panel'>
-<h1>EAF Benchmark Report: PPO, Q-Learning, DQN, MPC, and <span class='proposed'>Proposed Safe PPO-Agentic MPC</span></h1>
+<h1>EAF Benchmark Report: {policy_list}</h1>
 <p>All policies are evaluated on Model C enhanced hybrid simulator.</p>
 <p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes.</p>
 <p>Policies: {policy_list}</p>
@@ -472,15 +472,22 @@ def main() -> None:
     warnings: list[str] = []
     if missing_required:
         warnings.append(f"Missing required policies/checkpoints (allowed): {', '.join(missing_required)}")
+    dt_s = float(load_config(args.config).dt_s)
+    simulated_minutes = args.max_steps * dt_s / 60.0
+    tap_window_start_min = min(60.0, float(load_config(args.config).heat_duration_min) - 5.0)
+    if simulated_minutes < tap_window_start_min:
+        warnings.append(
+            f"Simulation horizon ({simulated_minutes:.1f} min) ends before tap window starts ({tap_window_start_min:.1f} min). "
+            "Tap metrics and energy_per_ton/Pareto charts may be invalid."
+        )
     no_tap = summary_df[summary_df["tap_success"] == False]["policy"].unique().tolist()  # noqa: E712
     if no_tap:
         warnings.append("No successful taps for: " + ", ".join(_display_name(p) for p in sorted(no_tap)))
 
     figures = _plot_all_figures(summary_df, output_dir, evaluated_policies)
-    _render_html(output_dir, summary_df, policy_stats, scenario_rank, comparison_df, stat_tests, policy_coverage, figures, args.max_steps, float(load_config(args.config).dt_s), warnings)
+    _render_html(output_dir, summary_df, policy_stats, scenario_rank, comparison_df, stat_tests, policy_coverage, figures, args.max_steps, dt_s, warnings)
 
     (output_dir / "report.md").write_text("# Agent Run Report\n\nSee result.html and CSV artifacts for full benchmark.")
-    dt_s = float(load_config(args.config).dt_s)
     (output_dir / "run_manifest.json").write_text(
         json.dumps(
             {
