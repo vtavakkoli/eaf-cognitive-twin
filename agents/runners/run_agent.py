@@ -10,6 +10,7 @@ import pandas as pd
 
 from eaf_twin.config.loader import load_config
 
+from agents.base import BasePolicy
 from agents.policies.baseline_schedule import IndustrialBaselineSchedulePolicy
 from agents.policies.behavior_cloning_policy import BehaviorCloningPolicy
 from agents.policies.dqn_policy import DQNPolicy
@@ -17,9 +18,36 @@ from agents.policies.mpc_policy import MPCPolicy
 from agents.policies.ppo_policy import PPOPolicy
 from agents.policies.q_learning_policy import QLearningPolicy
 from agents.policies.rule_based import RuleBasedPolicy
+from agents.policies.sac_inspired_policy import SACInspiredPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
+from agents.policies.td3_inspired_policy import TD3InspiredPolicy
 from agents.policies.trainable_policy import TrainablePolicy
 from agents.runners.benchmark_runner import run_benchmark
+
+POLICY_LABELS = {
+    "baseline_schedule": "Baseline Schedule",
+    "rule_based": "Rule-Based",
+    "mpc": "MPC",
+    "trainable_adaptive_controller": "Trainable Adaptive Controller",
+    "q_learning": "Q-Learning",
+    "dqn": "DQN",
+    "ppo": "PPO",
+    "safe_ppo_agentic_mpc": "Proposed Safe PPO-Agentic MPC",
+    "behavior_cloning": "Behavior Cloning",
+    "sac_inspired": "SAC-Inspired",
+    "td3_inspired": "TD3-Inspired",
+}
+
+
+def _canonical_policy_key(policy_key: str) -> str:
+    if policy_key == "agentic_ai":
+        return "trainable_adaptive_controller"
+    return policy_key
+
+
+def _display_name(policy_key: str) -> str:
+    canonical = _canonical_policy_key(policy_key)
+    return POLICY_LABELS.get(canonical, canonical.replace("_", " ").title())
 
 
 def _safe_pct(num: pd.Series, den: pd.Series) -> pd.Series:
@@ -34,10 +62,12 @@ def _ci95(series: pd.Series) -> float:
 
 
 def _normalized_score(df: pd.DataFrame) -> pd.Series:
+    energy = pd.to_numeric(df["energy_per_ton"], errors="coerce")
+    energy_filled = energy.fillna(energy.max(skipna=True) if energy.notna().any() else 0.0)
     out = (
         0.45 * (df["total_reward"] - df["total_reward"].min()) / max(df["total_reward"].max() - df["total_reward"].min(), 1e-9)
         + 0.25 * df["tap_success"].astype(float)
-        + 0.15 * (1.0 - (df["energy_per_ton"] - df["energy_per_ton"].min()) / max(df["energy_per_ton"].max() - df["energy_per_ton"].min(), 1e-9))
+        + 0.15 * (1.0 - (energy_filled - energy_filled.min()) / max(energy_filled.max() - energy_filled.min(), 1e-9))
         + 0.10 * (1.0 - (df["constraint_violation_rate"] - df["constraint_violation_rate"].min()) / max(df["constraint_violation_rate"].max() - df["constraint_violation_rate"].min(), 1e-9))
         + 0.05 * (1.0 - (df["tap_temperature_error"] - df["tap_temperature_error"].min()) / max(df["tap_temperature_error"].max() - df["tap_temperature_error"].min(), 1e-9))
     )
@@ -107,11 +137,39 @@ def _paired_stats(df: pd.DataFrame, baseline_policy: str, target_policy: str) ->
     }
 
 
-def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path) -> list[str]:
+def _format_table(df: pd.DataFrame) -> str:
+    pretty = df.copy()
+    if "policy" in pretty.columns:
+        pretty["policy"] = pretty["policy"].map(_display_name)
+    return pretty.to_html(index=False, classes="styled-table", na_rep="N/A")
+
+
+def _build_policy_coverage(summary_df: pd.DataFrame, evaluated_policies: list[str]) -> pd.DataFrame:
+    grouped = summary_df.groupby("policy", as_index=False).agg(
+        episodes=("policy", "size"),
+        scenarios=("scenario", "nunique"),
+        seeds=("seed", "nunique"),
+        tap_success_rate=("tap_success", "mean"),
+    )
+    grouped["display_name"] = grouped["policy"].map(_display_name)
+    grouped["included_in_all_outputs"] = grouped["policy"].isin(evaluated_policies)
+    return grouped.sort_values("policy")
+
+
+def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_policies: list[str]) -> list[str]:
     fig_dir = output_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
     files: list[str] = []
-    policy = summary_df.groupby("policy", as_index=False).agg(mean_reward=("total_reward", "mean"), std_reward=("total_reward", "std"), tap_success_rate=("tap_success", "mean"), energy_per_ton=("energy_per_ton", "mean"), violation_count=("temperature_violation_count", "sum"), normalized_score=("normalized_score", "mean"))
+    policy = summary_df.groupby("policy", as_index=False).agg(
+        mean_reward=("total_reward", "mean"),
+        std_reward=("total_reward", "std"),
+        tap_success_rate=("tap_success", "mean"),
+        energy_per_ton=("energy_per_ton", "mean"),
+        violation_count=("temperature_violation_count", "sum"),
+        normalized_score=("normalized_score", "mean"),
+    )
+    policy = policy.set_index("policy").reindex(evaluated_policies).reset_index()
+    policy["display_name"] = policy["policy"].map(_display_name)
 
     for col, fn, title in [
         ("mean_reward", "reward_mean_std.png", "Reward mean by policy"),
@@ -120,53 +178,209 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path) -> list[str]:
         ("violation_count", "violation_count.png", "Violation count by policy"),
         ("normalized_score", "normalized_score_ranking.png", "Normalized score by policy"),
     ]:
-        ax = policy.sort_values(col, ascending=False).plot(x="policy", y=col, kind="bar", legend=False, figsize=(9, 4))
+        sorted_policy = policy.sort_values(col, ascending=False, na_position="last")
+        ax = sorted_policy.plot(x="display_name", y=col, kind="bar", legend=False, figsize=(11, 4), color="#4f81bd")
+        for patch, policy_key in zip(ax.patches, sorted_policy["policy"]):
+            if policy_key == "safe_ppo_agentic_mpc":
+                patch.set_color("#d62728")
         ax.set_title(title)
-        plt.tight_layout(); plt.savefig(fig_dir / fn, dpi=150); plt.close(); files.append(fn)
+        ax.set_xlabel("")
+        plt.tight_layout()
+        plt.savefig(fig_dir / fn, dpi=150)
+        plt.close()
+        files.append(fn)
 
-    pivot = summary_df.pivot_table(index="scenario", columns="policy", values="normalized_score", aggfunc="mean")
-    plt.figure(figsize=(10, 4)); plt.imshow(pivot.values, aspect="auto", cmap="magma"); plt.colorbar(label="normalized_score")
-    plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=35, ha="right"); plt.yticks(range(len(pivot.index)), pivot.index)
-    plt.title("Scenario-policy heatmap"); plt.tight_layout(); plt.savefig(fig_dir / "scenario_policy_heatmap.png", dpi=150); plt.close(); files.append("scenario_policy_heatmap.png")
+    pivot = summary_df.pivot_table(index="scenario", columns="policy", values="normalized_score", aggfunc="mean").reindex(columns=evaluated_policies)
+    plt.figure(figsize=(12, 4))
+    plt.imshow(pivot.values, aspect="auto", cmap="magma")
+    plt.colorbar(label="normalized_score")
+    plt.xticks(range(len(pivot.columns)), [_display_name(p) for p in pivot.columns], rotation=35, ha="right")
+    plt.yticks(range(len(pivot.index)), pivot.index)
+    plt.title("Scenario-policy heatmap")
+    plt.tight_layout()
+    plt.savefig(fig_dir / "scenario_policy_heatmap.png", dpi=150)
+    plt.close()
+    files.append("scenario_policy_heatmap.png")
 
-    plt.figure(figsize=(8, 4));
-    for p, g in summary_df.groupby("policy"):
-        plt.scatter(g["energy_per_ton"].mean(), g["total_reward"].mean(), label=p)
-    plt.legend(); plt.xlabel("energy_per_ton"); plt.ylabel("total_reward"); plt.title("Pareto: reward vs energy_per_ton")
-    plt.tight_layout(); plt.savefig(fig_dir / "pareto_reward_vs_energy_per_ton.png", dpi=150); plt.close(); files.append("pareto_reward_vs_energy_per_ton.png")
-
-    # temperature trajectory comparison on base_case seed0 if available
-    ts_dir = output_dir / "timeseries"
     plt.figure(figsize=(9, 4))
-    for path in sorted(ts_dir.glob("agent_timeseries_base_case_*_seed0.csv")):
-        p = path.stem.split("_seed")[0].split("agent_timeseries_base_case_")[1]
+    for p in evaluated_policies:
+        g = summary_df[summary_df["policy"] == p]
+        if g.empty:
+            continue
+        marker = "*" if p == "safe_ppo_agentic_mpc" else "o"
+        size = 180 if p == "safe_ppo_agentic_mpc" else 80
+        plt.scatter(g["energy_per_ton"].mean(), g["total_reward"].mean(), label=_display_name(p), marker=marker, s=size)
+    plt.legend(fontsize=8)
+    plt.xlabel("energy_per_ton")
+    plt.ylabel("total_reward")
+    plt.title("Pareto: reward vs energy_per_ton")
+    plt.tight_layout()
+    plt.savefig(fig_dir / "pareto_reward_vs_energy_per_ton.png", dpi=150)
+    plt.close()
+    files.append("pareto_reward_vs_energy_per_ton.png")
+
+    ts_dir = output_dir / "timeseries"
+    plt.figure(figsize=(10, 4))
+    for p in evaluated_policies:
+        path = ts_dir / f"agent_timeseries_base_case_{p}_seed0.csv"
+        if not path.exists():
+            continue
         d = pd.read_csv(path)
         if {"time_min", "bath_temp_c"}.issubset(d.columns):
-            plt.plot(d["time_min"], d["bath_temp_c"], label=p)
-    plt.legend(fontsize=7); plt.title("Temperature trajectory comparison (base_case, seed0)"); plt.xlabel("time_min"); plt.ylabel("bath_temp_c")
-    plt.tight_layout(); plt.savefig(fig_dir / "temperature_trajectory_comparison.png", dpi=150); plt.close(); files.append("temperature_trajectory_comparison.png")
+            linewidth = 2.5 if p == "safe_ppo_agentic_mpc" else 1.2
+            plt.plot(d["time_min"], d["bath_temp_c"], label=_display_name(p), linewidth=linewidth)
+    plt.legend(fontsize=7)
+    plt.title("Temperature trajectory comparison (base_case, seed0)")
+    plt.xlabel("time_min")
+    plt.ylabel("bath_temp_c")
+    plt.tight_layout()
+    plt.savefig(fig_dir / "temperature_trajectory_comparison.png", dpi=150)
+    plt.close()
+    files.append("temperature_trajectory_comparison.png")
     return files
 
 
-def _render_html(output_dir: Path, summary_df: pd.DataFrame, policy_stats: pd.DataFrame, scenario_rank: pd.DataFrame, comparison_df: pd.DataFrame, stat_tests: pd.DataFrame, figures: list[str], max_steps: int, dt_s: float) -> None:
+def _render_html(
+    output_dir: Path,
+    summary_df: pd.DataFrame,
+    policy_stats: pd.DataFrame,
+    scenario_rank: pd.DataFrame,
+    comparison_df: pd.DataFrame,
+    stat_tests: pd.DataFrame,
+    policy_coverage: pd.DataFrame,
+    figures: list[str],
+    max_steps: int,
+    dt_s: float,
+    warnings: list[str],
+) -> None:
     best = policy_stats.iloc[0]
-    policy_list = ", ".join(sorted(summary_df["policy"].unique()))
+    policy_list = ", ".join(_display_name(p) for p in sorted(summary_df["policy"].unique()))
+    warning_html = "".join([f"<li>{w}</li>" for w in warnings]) if warnings else "<li>No warnings detected.</li>"
+    kpis = {
+        "Policies Evaluated": int(summary_df["policy"].nunique()),
+        "Scenarios": int(summary_df["scenario"].nunique()),
+        "Seeds": int(summary_df["seed"].nunique()),
+        "Tap Success (overall)": f"{100.0 * summary_df['tap_success'].mean():.1f}%",
+    }
+    kpi_cards = "".join([f"<div class='kpi-card'><div class='kpi-title'>{k}</div><div class='kpi-value'>{v}</div></div>" for k, v in kpis.items()])
+
+    key_policies = ["ppo", "q_learning", "dqn", "mpc", "safe_ppo_agentic_mpc"]
+    key_coverage = policy_coverage[policy_coverage["policy"].isin(key_policies)].copy()
+    figure_labels = {
+        "reward_mean_std.png": "Figure 1. Mean reward by evaluated policy",
+        "tap_success_rate.png": "Figure 2. Tap success rate by evaluated policy",
+        "energy_per_ton.png": "Figure 3. Energy per ton by evaluated policy",
+        "violation_count.png": "Figure 4. Violation count by evaluated policy",
+        "normalized_score_ranking.png": "Figure 5. Normalized score by evaluated policy",
+        "scenario_policy_heatmap.png": "Figure 6. Scenario-policy normalized score heatmap",
+        "pareto_reward_vs_energy_per_ton.png": "Figure 7. Pareto frontier: reward vs energy per ton",
+        "temperature_trajectory_comparison.png": "Figure 8. Base case temperature trajectories (seed 0)",
+    }
+    figures_html = "".join(
+        [
+            f"<div><img src='figures/{f}'><div style='font-size:12px;color:#42526e;margin-bottom:10px'>{figure_labels.get(f, f)}</div></div>"
+            for f in figures
+        ]
+    )
     html = f"""
-<html><head><meta charset='utf-8'><title>EAF Agentic AI Benchmark: PPO, Q-Learning, DQN, MPC, and Proposed Safe PPO-Agentic MPC</title></head>
-<body style='font-family:Arial;margin:20px'>
-<h1>EAF Agentic AI Benchmark: PPO, Q-Learning, DQN, MPC, and Proposed Safe PPO-Agentic MPC</h1>
-<p>All policies are evaluated on the same enhanced hybrid first-principles simulator, Model C.</p>
-<p>Simulation budget: {max_steps} steps, dt_s = {dt_s} seconds, equivalent to {max_steps*dt_s/60:.1f} simulated minutes.</p>
+<html>
+<head>
+<meta charset='utf-8'>
+<title>EAF Benchmar Report: PPO, Q-Learning, DQN, MPC, and Proposed Safe PPO-Agentic MPC</title>
+<style>
+body {{ font-family: Inter, Arial, sans-serif; margin: 24px; background: #f5f7fb; color: #1a1f36; }}
+.panel {{ background: #fff; border-radius: 12px; padding: 18px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+.kpi-grid {{ display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:12px; }}
+.kpi-card {{ background:#eef3ff; border:1px solid #dbe6ff; border-radius:10px; padding:12px; }}
+.kpi-title {{ font-size:12px; color:#42526e; }}
+.kpi-value {{ font-size:22px; font-weight:700; color:#0f2454; margin-top:4px; }}
+.styled-table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+.styled-table th, .styled-table td {{ border: 1px solid #e6ebf5; padding: 8px 10px; text-align: left; }}
+.styled-table th {{ background: #f0f4ff; }}
+.proposed {{ color:#b22222; font-weight:700; }}
+.warning {{ background:#fff7e6; border:1px solid #ffd591; border-radius:10px; padding:10px; }}
+img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e6ebf5; margin-bottom: 12px; }}
+</style>
+</head>
+<body>
+<div class='panel'>
+<h1>EAF Benchmar: PPO, Q-Learning, DQN, MPC, and <span class='proposed'>Proposed Safe PPO-Agentic MPC</span></h1>
+<p>All policies are evaluated on Model C enhanced hybrid simulator.</p>
+<p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes.</p>
 <p>Policies: {policy_list}</p>
-<h2>Main result table (mean ± std)</h2>{policy_stats.to_html(index=False)}
-<h2>Scenario-level ranking table</h2>{scenario_rank.to_html(index=False)}
-<h2>Baseline comparison table</h2>{comparison_df.to_html(index=False)}
-<h2>Statistical significance table</h2>{stat_tests.to_html(index=False)}
-<h2>Best policy decision</h2><p>Best policy by normalized_score: <b>{best['policy']}</b> (score={best['normalized_score']:.4f}), selected by transparent weighted metric combining reward, success, efficiency, violations, and temperature error.</p>
-<h2>Figures</h2>{''.join([f"<div><img src='figures/{f}' style='max-width:1000px;width:100%'></div>" for f in figures])}
-</body></html>
+</div>
+<div class='panel'><h2>KPI Cards</h2><div class='kpi-grid'>{kpi_cards}</div></div>
+<div class='panel'><h2>Policy Coverage</h2>{_format_table(policy_coverage)}</div>
+<div class='panel'><h2>Key Policy Coverage (PPO, Q-Learning, DQN, MPC, Proposed Safe PPO-Agentic MPC)</h2>{_format_table(key_coverage)}</div>
+<div class='panel warning'><h2>Diagnostic Warnings</h2><ul>{warning_html}</ul></div>
+<div class='panel'><h2>Main result table (mean ± std)</h2>{_format_table(policy_stats)}</div>
+<div class='panel'><h2>Scenario-level ranking table</h2>{_format_table(scenario_rank)}</div>
+<div class='panel'><h2>Baseline comparison table</h2>{_format_table(comparison_df)}</div>
+<div class='panel'><h2>Statistical significance table</h2>{_format_table(stat_tests)}</div>
+<div class='panel'><h2>Best policy decision</h2><p>Best policy by normalized_score: <b>{_display_name(str(best['policy']))}</b> (score={best['normalized_score']:.4f}).</p></div>
+<div class='panel'><h2>Figures (all evaluated policies)</h2>{figures_html}</div>
+</body>
+</html>
 """
     (output_dir / "result.html").write_text(html)
+
+
+def _load_or_default(path: Path, loader, default_ctor):
+    if path.exists():
+        return loader(path)
+    return default_ctor()
+
+
+def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], list[str]]:
+    policies: dict[str, BasePolicy] = {
+        "baseline_schedule": IndustrialBaselineSchedulePolicy(),
+        "rule_based": RuleBasedPolicy(),
+        "mpc": MPCPolicy(horizon=args.mpc_horizon),
+    }
+    missing_required: list[str] = []
+
+    policies["trainable_adaptive_controller"] = (
+        TrainablePolicy.load(args.trained_policy) if args.trained_policy.exists() else TrainablePolicy()
+    )
+
+    if args.include_rl_baselines:
+        policies["q_learning"] = _load_or_default(Path("results/agent_training/q_learning/q_table.json"), QLearningPolicy.load, QLearningPolicy)
+        policies["dqn"] = _load_or_default(Path("results/agent_training/dqn/best_policy.npy"), DQNPolicy.load, DQNPolicy)
+        policies["ppo"] = _load_or_default(Path("results/agent_training/ppo/best_policy.pt"), PPOPolicy.load, PPOPolicy)
+        policies["behavior_cloning"] = _load_or_default(Path("results/agent_training/behavior_cloning/policy.json"), BehaviorCloningPolicy.load, BehaviorCloningPolicy)
+        policies["safe_ppo_agentic_mpc"] = (
+            SafePPOAgenticMPCPolicy.load(Path("results/agent_training/safe_ppo_agentic_mpc/best_policy.pt"), horizon=args.mpc_horizon)
+            if Path("results/agent_training/safe_ppo_agentic_mpc/best_policy.pt").exists()
+            else SafePPOAgenticMPCPolicy(horizon=args.mpc_horizon)
+        )
+        policies["sac_inspired"] = SACInspiredPolicy()
+        policies["td3_inspired"] = TD3InspiredPolicy()
+
+    if missing_required and not args.allow_missing_rl_baselines:
+        raise ValueError(
+            "Missing required policy implementations/checkpoints: "
+            + ", ".join(missing_required)
+            + ". Pass --allow-missing-rl-baselines to continue."
+        )
+    return policies, missing_required
+
+
+def _write_tap_diagnostics(summary_df: pd.DataFrame, output_dir: Path) -> None:
+    cols = [
+        "seed",
+        "scenario",
+        "policy",
+        "reached_tap_temp",
+        "max_bath_temp_c",
+        "final_bath_temp_c",
+        "max_melted_fraction",
+        "can_tap_ever_true",
+        "tap_command_ever_true",
+        "tap_blocked_by_safety_filter_count",
+        "termination_reason",
+    ]
+    diag = summary_df[cols].copy()
+    diag.to_csv(output_dir / "tap_diagnostics.csv", index=False)
 
 
 def main() -> None:
@@ -181,30 +395,23 @@ def main() -> None:
     parser.add_argument("--report-format", default="html,csv,md")
     parser.add_argument("--max-steps", type=int, default=650)
     parser.add_argument("--include-rl-baselines", action="store_true")
+    parser.add_argument("--allow-missing-rl-baselines", action="store_true")
     args = parser.parse_args()
 
-    output_dir = args.output_dir; output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    policies = {"baseline_schedule": IndustrialBaselineSchedulePolicy(), "rule_based": RuleBasedPolicy(), "mpc": MPCPolicy(horizon=args.mpc_horizon)}
-    if args.trained_policy.exists():
-        policies["agentic_ai"] = TrainablePolicy.load(args.trained_policy)
-    if args.include_rl_baselines:
-        if Path("results/agent_training/q_learning/q_table.json").exists(): policies["q_learning"] = QLearningPolicy.load(Path("results/agent_training/q_learning/q_table.json"))
-        else: policies["q_learning"] = QLearningPolicy()
-        if Path("results/agent_training/dqn/best_policy.npy").exists(): policies["dqn"] = DQNPolicy.load(Path("results/agent_training/dqn/best_policy.npy"))
-        else: policies["dqn"] = DQNPolicy()
-        if Path("results/agent_training/ppo/best_policy.pt").exists(): policies["ppo"] = PPOPolicy.load(Path("results/agent_training/ppo/best_policy.pt"))
-        else: policies["ppo"] = PPOPolicy()
-        if Path("results/agent_training/behavior_cloning/policy.json").exists(): policies["behavior_cloning"] = BehaviorCloningPolicy.load(Path("results/agent_training/behavior_cloning/policy.json"))
-        else: policies["behavior_cloning"] = BehaviorCloningPolicy()
-        if Path("results/agent_training/safe_ppo_agentic_mpc/best_policy.pt").exists():
-            policies["safe_ppo_agentic_mpc"] = SafePPOAgenticMPCPolicy.load(Path("results/agent_training/safe_ppo_agentic_mpc/best_policy.pt"), horizon=args.mpc_horizon)
-        else:
-            policies["safe_ppo_agentic_mpc"] = SafePPOAgenticMPCPolicy(horizon=args.mpc_horizon)
+    policies, missing_required = _build_policies(args)
+    evaluated_policies = list(policies.keys())
 
     seeds = list(range(args.seeds))
     scenario_order = ["base_case", "higher_oxygen", "higher_natural_gas", "improved_foamy_slag", "dri20", "delayed_melting_downtime"][: args.n_scenarios]
     summary_df = run_benchmark(args.config, policies, output_dir, seeds=seeds, selected_scenarios=scenario_order, max_steps=args.max_steps)
+
+    missing_from_results = sorted(set(evaluated_policies) - set(summary_df["policy"].unique()))
+    if missing_from_results and not args.allow_missing_rl_baselines:
+        raise ValueError(f"Missing policies in benchmark output: {missing_from_results}. Pass --allow-missing-rl-baselines to continue.")
+
     summary_df["normalized_score"] = _normalized_score(summary_df)
     summary_df = summary_df.sort_values(["scenario", "total_reward"], ascending=[True, False]).reset_index(drop=True)
     summary_df.to_csv(output_dir / "scenario_summary.csv", index=False)
@@ -216,12 +423,13 @@ def main() -> None:
     summary_df["rank_by_scenario"] = summary_df.groupby(["seed", "scenario"])["normalized_score"].rank(ascending=False, method="dense")
     scenario_rank = summary_df.groupby(["scenario", "policy"], as_index=False)["rank_by_scenario"].mean().sort_values(["scenario", "rank_by_scenario"])
 
-    kpi_comparison = summary_df.pivot_table(index=["seed", "scenario"], columns="policy", values=["cum_tapped_kg", "total_reward", "cum_electric_mwh", "cum_oxygen_nm3", "cum_ng_nm3", "final_temp_c", "normalized_score"]) 
+    kpi_comparison = summary_df.pivot_table(index=["seed", "scenario"], columns="policy", values=["cum_tapped_kg", "total_reward", "cum_electric_mwh", "cum_oxygen_nm3", "cum_ng_nm3", "final_temp_c", "normalized_score"])
+    kpi_comparison = kpi_comparison.reindex(columns=evaluated_policies, level=1)
     kpi_comparison.to_csv(output_dir / "kpi_comparison.csv")
 
     baseline = summary_df[summary_df["policy"] == "baseline_schedule"][["seed", "scenario", "total_reward", "cum_tapped_kg", "cum_electric_mwh"]]
     comparison_rows = []
-    for policy in sorted(summary_df["policy"].unique()):
+    for policy in evaluated_policies:
         if policy == "baseline_schedule":
             continue
         cur = summary_df[summary_df["policy"] == policy][["seed", "scenario", "total_reward", "cum_tapped_kg", "cum_electric_mwh"]]
@@ -229,16 +437,25 @@ def main() -> None:
         if j.empty:
             continue
         reward_gain = _safe_pct(j["total_reward_policy"] - j["total_reward_baseline"], j["total_reward_baseline"].abs())
-        comparison_rows.append({"policy": policy, "reward_delta": float((j["total_reward_policy"] - j["total_reward_baseline"]).mean()), "tapped_delta_kg": float((j["cum_tapped_kg_policy"] - j["cum_tapped_kg_baseline"]).mean()), "electric_delta_mwh": float((j["cum_electric_mwh_policy"] - j["cum_electric_mwh_baseline"]).mean()), "reward_gain_vs_baseline_pct": "n/a" if (reward_gain == "n/a").any() else float(pd.to_numeric(reward_gain).mean())})
+        comparison_rows.append(
+            {
+                "policy": policy,
+                "reward_delta": float((j["total_reward_policy"] - j["total_reward_baseline"]).mean()),
+                "tapped_delta_kg": float((j["cum_tapped_kg_policy"] - j["cum_tapped_kg_baseline"]).mean()),
+                "electric_delta_mwh": float((j["cum_electric_mwh_policy"] - j["cum_electric_mwh_baseline"]).mean()),
+                "reward_gain_vs_baseline_pct": "n/a" if (reward_gain == "n/a").any() else float(pd.to_numeric(reward_gain).mean()),
+            }
+        )
     comparison_df = pd.DataFrame(comparison_rows)
 
     stat_df = summary_df.groupby("policy", as_index=False).agg(mean=("total_reward", "mean"), std=("total_reward", "std"), median=("total_reward", "median"), min=("total_reward", "min"), max=("total_reward", "max"))
     stat_df.to_csv(output_dir / "statistical_analysis.csv", index=False)
 
     pairs = []
-    for target in sorted(summary_df["policy"].unique()):
-        for baseline_name in ["baseline_schedule", "mpc", "ppo"]:
-            if target == baseline_name or baseline_name not in summary_df["policy"].unique():
+    baselines_for_tests = [p for p in ["baseline_schedule", "mpc", "ppo"] if p in evaluated_policies]
+    for target in evaluated_policies:
+        for baseline_name in baselines_for_tests:
+            if target == baseline_name:
                 continue
             r = _paired_stats(summary_df, baseline_name, target)
             if r:
@@ -246,12 +463,39 @@ def main() -> None:
     stat_tests = pd.DataFrame(pairs)
     stat_tests.to_csv(output_dir / "statistical_tests.csv", index=False)
 
-    figures = _plot_all_figures(summary_df, output_dir)
-    _render_html(output_dir, summary_df, policy_stats, scenario_rank, comparison_df, stat_tests, figures, args.max_steps, float(load_config(args.config).dt_s))
+    policy_coverage = _build_policy_coverage(summary_df, evaluated_policies)
+    policy_coverage.to_csv(output_dir / "policy_coverage.csv", index=False)
+
+    _write_tap_diagnostics(summary_df, output_dir)
+
+    warnings: list[str] = []
+    if missing_required:
+        warnings.append(f"Missing required policies/checkpoints (allowed): {', '.join(missing_required)}")
+    no_tap = summary_df[summary_df["tap_success"] == False]["policy"].unique().tolist()  # noqa: E712
+    if no_tap:
+        warnings.append("No successful taps for: " + ", ".join(_display_name(p) for p in sorted(no_tap)))
+
+    figures = _plot_all_figures(summary_df, output_dir, evaluated_policies)
+    _render_html(output_dir, summary_df, policy_stats, scenario_rank, comparison_df, stat_tests, policy_coverage, figures, args.max_steps, float(load_config(args.config).dt_s), warnings)
 
     (output_dir / "report.md").write_text("# Agent Run Report\n\nSee result.html and CSV artifacts for full benchmark.")
     dt_s = float(load_config(args.config).dt_s)
-    (output_dir / "run_manifest.json").write_text(json.dumps({"policies": list(policies.keys()), "config": str(args.config), "model_name": "Model_C_enhanced_hybrid", "max_steps": args.max_steps, "dt_s": dt_s, "simulated_minutes": args.max_steps * dt_s / 60.0, "early_termination_allowed": True}, indent=2))
+    (output_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "policies": evaluated_policies,
+                "evaluated_policies": evaluated_policies,
+                "policy_display_names": {k: _display_name(k) for k in evaluated_policies},
+                "config": str(args.config),
+                "model_name": "Model_C_enhanced_hybrid",
+                "max_steps": args.max_steps,
+                "dt_s": dt_s,
+                "simulated_minutes": args.max_steps * dt_s / 60.0,
+                "early_termination_allowed": True,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

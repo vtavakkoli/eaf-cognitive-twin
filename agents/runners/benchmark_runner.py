@@ -41,14 +41,29 @@ def run_benchmark(
                 tap_reason = str(last.get("tap_reason", "not_ready"))
                 tapped_kg = float(last["cum_tapped_kg"])
                 target = float(controller.config.tap_target_steel_kg)
-                energy_per_ton = float(last["cum_electric_mwh"]) / max(tapped_kg / 1000.0, 1e-9)
-                oxygen_per_ton = float(last["cum_oxygen_nm3"]) / max(tapped_kg / 1000.0, 1e-9)
-                ng_per_ton = float(last["cum_ng_nm3"]) / max(tapped_kg / 1000.0, 1e-9)
+                if tapped_kg <= 0.0:
+                    energy_per_ton = float("nan")
+                    oxygen_per_ton = float("nan")
+                    ng_per_ton = float("nan")
+                else:
+                    tapped_tons = tapped_kg / 1000.0
+                    energy_per_ton = float(last["cum_electric_mwh"]) / tapped_tons
+                    oxygen_per_ton = float(last["cum_oxygen_nm3"]) / tapped_tons
+                    ng_per_ton = float(last["cum_ng_nm3"]) / tapped_tons
                 temp_err = abs(float(last["bath_temp_c"]) - float(controller.config.tap_target_temp_c))
                 mass_err = abs(tapped_kg - target)
                 carbon_err = abs(float(last["steel_carbon_wt_pct"]) - 0.05)
                 violation_cnt = int(outcome.episode_df.get("safety_violation", pd.Series(dtype=bool)).sum()) + int(outcome.episode_df.get("temperature_violation", pd.Series(dtype=bool)).sum())
                 invalid_cnt = int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).sum()) + int(outcome.episode_df.get("action_clamped", pd.Series(dtype=bool)).sum())
+                max_temp_c = float(outcome.episode_df["bath_temp_c"].max())
+                final_temp_c = float(last["bath_temp_c"])
+                tap_target_temp_c = float(controller.config.tap_target_temp_c)
+                reached_tap_temp = bool(max_temp_c >= tap_target_temp_c)
+                max_melted_fraction = float(outcome.episode_df.get("melted_fraction", pd.Series([0.0])).max())
+                can_tap_ever_true = bool(outcome.episode_df.get("can_tap", pd.Series(dtype=bool)).fillna(False).astype(bool).any())
+                tap_command_ever_true = bool(outcome.episode_df.get("tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).any())
+                tap_blocked_by_safety_filter_count = int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
+                termination_reason = str(last.get("termination_reason", "tapped" if tapped_kg > 0.0 else "heat_end_without_tap"))
                 rows.append(
                     {
                         "seed": seed,
@@ -62,7 +77,7 @@ def run_benchmark(
                         "cum_tapped_kg": tapped_kg,
                         "tapped_t": tapped_kg / 1000.0,
                         "tap_success": bool(tapped_kg > 0.0),
-                        "final_temp_c": float(last["bath_temp_c"]),
+                        "final_temp_c": final_temp_c,
                         "cum_electric_mwh": float(last["cum_electric_mwh"]),
                         "cum_oxygen_nm3": float(last["cum_oxygen_nm3"]),
                         "cum_ng_nm3": float(last["cum_ng_nm3"]),
@@ -71,7 +86,14 @@ def run_benchmark(
                         "temperature_violation_count": int(outcome.episode_df.get("temperature_violation", pd.Series(dtype=bool)).sum()),
                         "invalid_tap_count": int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).sum()),
                         "action_clamp_count": int(outcome.episode_df.get("action_clamped", pd.Series(dtype=bool)).sum()),
-                        "max_bath_temp_c": float(outcome.episode_df["bath_temp_c"].max()),
+                        "max_bath_temp_c": max_temp_c,
+                        "reached_tap_temp": reached_tap_temp,
+                        "final_bath_temp_c": final_temp_c,
+                        "max_melted_fraction": max_melted_fraction,
+                        "can_tap_ever_true": can_tap_ever_true,
+                        "tap_command_ever_true": tap_command_ever_true,
+                        "tap_blocked_by_safety_filter_count": tap_blocked_by_safety_filter_count,
+                        "termination_reason": termination_reason,
                         "baseline_tap_success_rate": 1.0 if policy_name == "baseline_schedule" and tapped_kg > 0.0 else 0.0,
                         "baseline_tapped_kg": tapped_kg if policy_name == "baseline_schedule" else 0.0,
                         "baseline_final_temp_c": float(last["bath_temp_c"]) if policy_name == "baseline_schedule" else 0.0,
