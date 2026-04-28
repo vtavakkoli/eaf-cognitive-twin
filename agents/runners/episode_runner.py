@@ -16,7 +16,7 @@ class EpisodeOutcome:
     final_tapped_kg: float
 
 
-def run_episode(controller: EAFController, policy: BasePolicy, policy_name: str, max_steps: int = 600) -> EpisodeOutcome:
+def run_episode(controller: EAFController, policy: BasePolicy, policy_name: str, max_steps: int = 500) -> EpisodeOutcome:
     obs = controller.reset()
     policy.reset()
     rows = []
