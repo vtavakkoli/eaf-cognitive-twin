@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -152,6 +153,11 @@ class TestAgentRunners(unittest.TestCase):
         s = _safe_pct(pd.Series([10.0]), pd.Series([0.0]))
         self.assertEqual(s.iloc[0], "n/a")
 
+    def test_agentic_ai_key_maps_to_trainable_adaptive_controller(self):
+        from agents.runners.run_agent import _canonical_policy_key
+
+        self.assertEqual(_canonical_policy_key("agentic_ai"), "trainable_adaptive_controller")
+
     def test_result_html_created(self):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td)
@@ -182,6 +188,44 @@ class TestAgentRunners(unittest.TestCase):
             summary = pd.read_csv(out / "scenario_summary.csv")
             for col in ["tap_success", "cum_tapped_kg", "max_bath_temp_c", "cum_electric_mwh", "model_name", "seed", "terminal_reward"]:
                 self.assertIn(col, summary.columns)
+
+    def test_agentic_ai_alias_and_report_coverage(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agents.runners.run_agent",
+                    "--output-dir",
+                    str(out),
+                    "--seeds",
+                    "1",
+                    "--n-scenarios",
+                    "1",
+                    "--max-steps",
+                    "30",
+                    "--include-rl-baselines",
+                    "--allow-missing-rl-baselines",
+                ],
+                check=True,
+                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+            )
+            summary = pd.read_csv(out / "scenario_summary.csv")
+            html = (out / "result.html").read_text()
+            self.assertNotIn("agentic_ai", html)
+            self.assertIn("Q-Learning", html)
+            self.assertIn("DQN", html)
+            self.assertIn("PPO", html)
+            self.assertIn("Proposed Safe PPO-Agentic MPC", html)
+            for policy in ["ppo", "q_learning", "dqn", "safe_ppo_agentic_mpc"]:
+                self.assertIn(policy, summary["policy"].unique().tolist())
+            cov = pd.read_csv(out / "policy_coverage.csv")
+            self.assertTrue((out / "policy_coverage.csv").exists())
+            self.assertTrue(set(summary["policy"].unique()).issubset(set(cov["policy"].unique())))
+            manifest = json.loads((out / "run_manifest.json").read_text())
+            self.assertIn("evaluated_policies", manifest)
+            self.assertEqual(sorted(manifest["evaluated_policies"]), sorted(summary["policy"].unique().tolist()))
 
 
 if __name__ == "__main__":
