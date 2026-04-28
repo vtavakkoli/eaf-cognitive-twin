@@ -151,9 +151,13 @@ def _build_policy_coverage(summary_df: pd.DataFrame, evaluated_policies: list[st
         seeds=("seed", "nunique"),
         tap_success_rate=("tap_success", "mean"),
     )
-    grouped["display_name"] = grouped["policy"].map(_display_name)
-    grouped["included_in_all_outputs"] = grouped["policy"].isin(evaluated_policies)
-    return grouped.sort_values("policy")
+    coverage = pd.DataFrame({"policy": evaluated_policies}).merge(grouped, on="policy", how="left")
+    for col in ["episodes", "scenarios", "seeds"]:
+        coverage[col] = coverage[col].fillna(0).astype(int)
+    coverage["tap_success_rate"] = pd.to_numeric(coverage["tap_success_rate"], errors="coerce")
+    coverage["display_name"] = coverage["policy"].map(_display_name)
+    coverage["included_in_all_outputs"] = True
+    return coverage.sort_values("policy")
 
 
 def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_policies: list[str]) -> list[str]:
@@ -264,17 +268,6 @@ def _render_html(
     }
     kpi_cards = "".join([f"<div class='kpi-card'><div class='kpi-title'>{k}</div><div class='kpi-value'>{v}</div></div>" for k, v in kpis.items()])
 
-    key_policies = ["ppo", "q_learning", "dqn", "mpc", "safe_ppo_agentic_mpc"]
-    key_coverage = (
-        policy_coverage.set_index("policy")
-        .reindex(key_policies)
-        .reset_index()
-    )
-    key_coverage["display_name"] = key_coverage["policy"].map(_display_name)
-    for col in ["episodes", "scenarios", "seeds"]:
-        key_coverage[col] = key_coverage[col].fillna(0).astype(int)
-    key_coverage["tap_success_rate"] = pd.to_numeric(key_coverage["tap_success_rate"], errors="coerce")
-    key_coverage["included_in_all_outputs"] = key_coverage["included_in_all_outputs"].fillna(False).astype(bool)
     figure_labels = {
         "reward_mean_std.png": "Figure 1. Mean reward by evaluated policy",
         "tap_success_rate.png": "Figure 2. Tap success rate by evaluated policy",
@@ -295,7 +288,7 @@ def _render_html(
 <html>
 <head>
 <meta charset='utf-8'>
-<title>EAF Benchmar Report: PPO, Q-Learning, DQN, MPC, and Proposed Safe PPO-Agentic MPC</title>
+<title>EAF Benchmark Report</title>
 <style>
 body {{ font-family: Inter, Arial, sans-serif; margin: 24px; background: #f5f7fb; color: #1a1f36; }}
 .panel {{ background: #fff; border-radius: 12px; padding: 18px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
@@ -313,14 +306,13 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 </head>
 <body>
 <div class='panel'>
-<h1>EAF Benchmar: PPO, Q-Learning, DQN, MPC, and <span class='proposed'>Proposed Safe PPO-Agentic MPC</span></h1>
+<h1>EAF Benchmark Report: PPO, Q-Learning, DQN, MPC, and <span class='proposed'>Proposed Safe PPO-Agentic MPC</span></h1>
 <p>All policies are evaluated on Model C enhanced hybrid simulator.</p>
 <p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes.</p>
 <p>Policies: {policy_list}</p>
 </div>
 <div class='panel'><h2>KPI Cards</h2><div class='kpi-grid'>{kpi_cards}</div></div>
 <div class='panel'><h2>Policy Coverage</h2>{_format_table(policy_coverage)}</div>
-<div class='panel'><h2>Key Policy Coverage (PPO, Q-Learning, DQN, MPC, Proposed Safe PPO-Agentic MPC)</h2>{_format_table(key_coverage)}</div>
 <div class='panel warning'><h2>Diagnostic Warnings</h2><ul>{warning_html}</ul></div>
 <div class='panel'><h2>Main result table (mean ± std)</h2>{_format_table(policy_stats)}</div>
 <div class='panel'><h2>Scenario-level ranking table</h2>{_format_table(scenario_rank)}</div>
