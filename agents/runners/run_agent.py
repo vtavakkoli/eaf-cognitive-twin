@@ -7,6 +7,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from eaf_twin.config.loader import load_config
+
 from agents.policies.baseline_schedule import IndustrialBaselineSchedulePolicy
 from agents.policies.mpc_policy import MPCPolicy
 from agents.policies.rule_based import RuleBasedPolicy
@@ -311,7 +313,20 @@ def main() -> None:
         scen = summary_df[summary_df["scenario"] == scenario].sort_values("total_reward", ascending=False)
         report_lines.extend([f"### {scenario}", scen.to_csv(index=False), ""])
     (output_dir / "report.md").write_text("\n".join(report_lines))
-    (output_dir / "run_manifest.json").write_text(json.dumps({"policies": list(policies.keys()), "config": str(args.config), "model_name": "Model_C_enhanced_hybrid", "max_steps": 500}, indent=2))
+    dt_s = float(load_config(args.config).dt_s)
+    max_steps = max(1, int((55.0 * 60.0) / max(dt_s, 1e-9)))
+    (output_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "policies": list(policies.keys()),
+                "config": str(args.config),
+                "model_name": "Model_C_enhanced_hybrid",
+                "max_simulation_minutes": 55.0,
+                "max_steps": max_steps,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
