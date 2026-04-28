@@ -46,13 +46,21 @@ class EAFController:
         t_min = self.state.time_s / 60.0
         return active_setpoints(self.config, t_min) | {"tap_command": False}
 
+    @property
+    def tap_window_start_min(self) -> float:
+        return min(60.0, self.config.heat_duration_min - 5.0)
+
+    @property
+    def tap_window_end_min(self) -> float:
+        return self.config.heat_duration_min
+
     def _can_tap(self) -> bool:
         s = self.state
         assert s is not None
         cfg = self.config
         t_min = s.time_s / 60.0
         return (
-            self.TAP_WINDOW_START_MIN <= t_min <= self.TAP_WINDOW_END_MIN
+            self.tap_window_start_min <= t_min <= self.tap_window_end_min
             and
             s.melted_fraction >= 0.95
             and s.liquid_steel_kg >= 0.75 * cfg.tap_target_steel_kg
@@ -159,7 +167,7 @@ class EAFController:
         self.state.time_s += self.config.dt_s
         self.prev_action = safe_action
 
-        done = self.state.tap_end_time_s is not None or (self.state.time_s / 60.0) >= max(self.config.heat_duration_min, self.TAP_WINDOW_END_MIN)
+        done = self.state.tap_end_time_s is not None or (self.state.time_s / 60.0) >= max(self.config.heat_duration_min, self.tap_window_end_min)
         reward_components = self._reward_components(safety_flags)
         obs = self._observation({**extras, **reward_components})
         info = {"warnings": list(self.warnings), "safe_action": safe_action, **extras, **safety_flags, "is_downtime": is_down, **reward_components}
