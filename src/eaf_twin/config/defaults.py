@@ -30,6 +30,7 @@ def default_config() -> FurnaceConfig:
     cfg = FurnaceConfig()
     cfg.stage_windows = default_stage_windows()
     cfg.charge_events = default_charge_events(cfg)
+    cfg.max_heat_time_min = cfg.heat_duration_min
     return cfg
 
 
@@ -48,6 +49,9 @@ def scenario_configs(base: FurnaceConfig) -> dict[str, FurnaceConfig]:
     better.eta_arc_refining = min(0.86, base.eta_arc_refining + 0.04)
     scenarios["improved_foamy_slag"] = better
 
-    scenarios["dri20"] = replace(base, initial_dri_kg=20_000.0)
+    dri20 = replace(base, initial_dri_kg=20_000.0)
+    dri20.charge_events = default_charge_events(dri20)
+    scenarios["dri20"] = dri20
+
     scenarios["delayed_melting_downtime"] = replace(base, downtime_start_min=28.0, downtime_duration_min=6.0)
     return scenarios
