@@ -314,14 +314,16 @@ def main() -> None:
         report_lines.extend([f"### {scenario}", scen.to_csv(index=False), ""])
     (output_dir / "report.md").write_text("\n".join(report_lines))
     dt_s = float(load_config(args.config).dt_s)
-    max_steps = max(1, int((55.0 * 60.0) / max(dt_s, 1e-9)))
+    max_steps = max(1, int((70.0 * 60.0) / max(dt_s, 1e-9)))
     (output_dir / "run_manifest.json").write_text(
         json.dumps(
             {
                 "policies": list(policies.keys()),
                 "config": str(args.config),
                 "model_name": "Model_C_enhanced_hybrid",
-                "max_simulation_minutes": 55.0,
+                "process_control_minutes": 65.0,
+                "tap_window_min": [66.0, 70.0],
+                "max_simulation_minutes": 70.0,
                 "max_steps": max_steps,
             },
             indent=2,

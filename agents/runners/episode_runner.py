@@ -21,7 +21,7 @@ def run_episode(
     policy: BasePolicy,
     policy_name: str,
     max_steps: int | None = None,
-    max_minutes: float = 55.0,
+    max_minutes: float = 70.0,
 ) -> EpisodeOutcome:
     if max_steps is None:
         dt_s = float(getattr(controller.config, "dt_s", 1.0))

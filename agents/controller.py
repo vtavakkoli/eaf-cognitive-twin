@@ -14,6 +14,9 @@ from agents.types import ActionDict, ObservationDict, StepResult
 
 
 class EAFController:
+    TAP_WINDOW_START_MIN = 66.0
+    TAP_WINDOW_END_MIN = 70.0
+
     def __init__(self, config: FurnaceConfig, enhanced_model: bool = True):
         self.config = replace(config)
         self.model = FirstPrinciplesModel(self.config, enhanced=enhanced_model)
@@ -47,7 +50,10 @@ class EAFController:
         s = self.state
         assert s is not None
         cfg = self.config
+        t_min = s.time_s / 60.0
         return (
+            self.TAP_WINDOW_START_MIN <= t_min <= self.TAP_WINDOW_END_MIN
+            and
             s.melted_fraction >= 0.95
             and s.liquid_steel_kg >= 0.75 * cfg.tap_target_steel_kg
             and s.steel_temp_k >= cfg.steel_melt_temp_k
@@ -153,7 +159,7 @@ class EAFController:
         self.state.time_s += self.config.dt_s
         self.prev_action = safe_action
 
-        done = self.state.tap_end_time_s is not None or (self.state.time_s / 60.0) >= self.config.heat_duration_min
+        done = self.state.tap_end_time_s is not None or (self.state.time_s / 60.0) >= max(self.config.heat_duration_min, self.TAP_WINDOW_END_MIN)
         reward_components = self._reward_components(safety_flags)
         obs = self._observation({**extras, **reward_components})
         info = {"warnings": list(self.warnings), "safe_action": safe_action, **extras, **safety_flags, "is_downtime": is_down, **reward_components}
