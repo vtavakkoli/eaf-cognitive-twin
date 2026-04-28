@@ -25,7 +25,11 @@ def run_episode(controller: EAFController, policy: BasePolicy, policy_name: str)
     while not done:
         action = policy.act(obs)
         result = controller.step(action)
-        row = {"policy": policy_name, **result.observation, **result.info["safe_action"], "reward": result.reward}
+        row_obs = {k: v for k, v in result.observation.items() if not k.startswith("_") and k != "default_schedule_action"}
+        row = {"policy": policy_name, **row_obs, **result.info["safe_action"], "reward": result.reward}
+        row.update({k: v for k, v in result.info.items() if k in {"safety_violation", "temperature_violation", "carbon_violation", "invalid_tap_command", "action_clamped", "clamp_reason", "is_downtime"}})
+        if hasattr(policy, "tap_reason"):
+            row["tap_reason"] = getattr(policy, "tap_reason")(obs)
         rows.append(row)
         obs = result.observation
         total_reward += result.reward

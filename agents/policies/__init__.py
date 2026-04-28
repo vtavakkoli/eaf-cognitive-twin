@@ -4,6 +4,7 @@ from agents.policies.llm_policy import LLMPolicy
 from agents.policies.mpc_policy import MPCPolicy
 from agents.policies.rule_based import RuleBasedPolicy
 from agents.policies.trainable_policy import TrainablePolicy
+from agents.policies.baseline_schedule import IndustrialBaselineSchedulePolicy
 
 __all__ = [
     "HeuristicParams",
@@ -13,4 +14,5 @@ __all__ = [
     "MPCPolicy",
     "RuleBasedPolicy",
     "TrainablePolicy",
+    "IndustrialBaselineSchedulePolicy",
 ]
