@@ -1,63 +1,80 @@
 # EAF Cognitive Twin
 
-EAF Cognitive Twin for comparing industrial control policies under an enhanced hybrid simulator.
+EAF Cognitive Twin benchmark for industrial control and agentic AI policies.
 
 ## Benchmark simulator (Model C)
-Model C is the enhanced hybrid first-principles simulator used as the benchmark environment:
+All policies are evaluated on the same enhanced hybrid first-principles simulator, Model C:
 `Model_C_enhanced_hybrid = FirstPrinciplesModel(enhanced=True)`.
 
-All benchmark policies are evaluated on the same Model C simulator for fair comparison.
-
-## Policies
+## Policies compared
 - `baseline_schedule`
 - `rule_based`
 - `mpc`
 - `agentic_ai`
+- `q_learning`
+- `dqn`
+- `ppo`
+- `behavior_cloning`
+- `safe_ppo_agentic_mpc` (proposed)
 
-## Scenarios
-- `base_case`
-- `higher_oxygen`
-- `higher_natural_gas`
-- `improved_foamy_slag`
-- `dri20`
-- `delayed_melting_downtime`
-
-## Metrics
-- reward
-- tap success
-- tapped mass
-- energy
-- oxygen
-- natural gas
-- temperature violations
-- feasibility
+## Proposed method
+The proposed **Safe PPO-Agentic MPC** controller combines policy-gradient learning with model-based safety correction and rule-based tap gating. PPO provides adaptive control under nonlinear furnace dynamics, while MPC-style local lookahead corrects unsafe or inefficient actions before execution. A final safety filter enforces operational constraints.
 
 ## Reproducible commands
+Training:
 ```bash
 python -m agents.runners.train_agent \
   --config configs/base_case.json \
-  --output-dir results/agent_training \
-  --iterations 100 \
-  --seed 7
+  --algorithm q_learning \
+  --episodes 500 \
+  --seed 7 \
+  --output-dir results/agent_training/q_learning
 
+python -m agents.runners.train_agent \
+  --config configs/base_case.json \
+  --algorithm dqn \
+  --episodes 500 \
+  --seed 7 \
+  --output-dir results/agent_training/dqn
+
+python -m agents.runners.train_agent \
+  --config configs/base_case.json \
+  --algorithm ppo \
+  --episodes 1000 \
+  --seed 7 \
+  --output-dir results/agent_training/ppo
+
+python -m agents.runners.train_agent \
+  --config configs/base_case.json \
+  --algorithm safe_ppo_agentic_mpc \
+  --episodes 1000 \
+  --seed 7 \
+  --output-dir results/agent_training/safe_ppo_agentic_mpc
+```
+
+Evaluation:
+```bash
 python -m agents.runners.run_agent \
   --config configs/base_case.json \
   --output-dir results/agent_run \
-  --trained-policy results/agent_training/checkpoints/best_policy.json \
-  --seeds 10 \
+  --seeds 30 \
+  --n-scenarios 6 \
   --model C \
-  --mpc-horizon 8
+  --max-steps 650 \
+  --mpc-horizon 8 \
+  --include-rl-baselines \
+  --report-format html,csv,md
 ```
 
-## Expected outputs
-- `results/agent_run/result.html`
-- `results/agent_run/scenario_summary.csv`
-- `results/agent_run/policy_aggregate_summary.csv`
-- `results/agent_run/statistical_analysis.csv`
-- `results/agent_run/timeseries/*.csv`
-- `results/agent_run/figures/*.png`
-
-## Tests
+Docker:
 ```bash
-python -m pytest tests
+docker compose run --rm eaf-twin python -m agents.runners.run_agent \
+  --config configs/base_case.json \
+  --output-dir results/agent_run \
+  --seeds 30 \
+  --n-scenarios 6 \
+  --model C \
+  --max-steps 650 \
+  --mpc-horizon 8 \
+  --include-rl-baselines
 ```

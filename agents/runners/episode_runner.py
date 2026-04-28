@@ -40,6 +40,9 @@ def run_episode(
         row.update({k: v for k, v in result.info.items() if k in {"safety_violation", "temperature_violation", "carbon_violation", "invalid_tap_command", "action_clamped", "clamp_reason", "is_downtime"}})
         if hasattr(policy, "tap_reason"):
             row["tap_reason"] = getattr(policy, "tap_reason")(obs)
+        if hasattr(policy, "last_info") and isinstance(getattr(policy, "last_info"), dict):
+            row.update(getattr(policy, "last_info"))
+        row["safety_filter_applied"] = bool(result.info.get("action_clamped", False))
         rows.append(row)
         obs = result.observation
         total_reward += result.reward

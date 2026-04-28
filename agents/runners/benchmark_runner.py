@@ -20,6 +20,7 @@ def run_benchmark(
     output_dir: Path,
     seeds: list[int],
     selected_scenarios: list[str] | None = None,
+    max_steps: int = 650,
 ) -> pd.DataFrame:
     cfg = load_config(config_path) if config_path else load_config(None)
     scenarios = scenario_configs(cfg)
@@ -33,11 +34,21 @@ def run_benchmark(
             for policy_name, policy in policies.items():
                 controller = EAFController(replace(scen_cfg), enhanced_model=True)
                 actual_policy: BasePolicy = IndustrialBaselineSchedulePolicy() if policy_name == "baseline_schedule" else policy
-                outcome = run_episode(controller, actual_policy, policy_name=policy_name)
+                outcome = run_episode(controller, actual_policy, policy_name=policy_name, max_steps=max_steps)
                 ts_path = output_dir / "timeseries" / f"agent_timeseries_{scen_name}_{policy_name}_seed{seed}.csv"
                 outcome.episode_df.to_csv(ts_path, index=False)
                 last = outcome.episode_df.iloc[-1]
                 tap_reason = str(last.get("tap_reason", "not_ready"))
+                tapped_kg = float(last["cum_tapped_kg"])
+                target = float(controller.config.tap_target_steel_kg)
+                energy_per_ton = float(last["cum_electric_mwh"]) / max(tapped_kg / 1000.0, 1e-9)
+                oxygen_per_ton = float(last["cum_oxygen_nm3"]) / max(tapped_kg / 1000.0, 1e-9)
+                ng_per_ton = float(last["cum_ng_nm3"]) / max(tapped_kg / 1000.0, 1e-9)
+                temp_err = abs(float(last["bath_temp_c"]) - float(controller.config.tap_target_temp_c))
+                mass_err = abs(tapped_kg - target)
+                carbon_err = abs(float(last["steel_carbon_wt_pct"]) - 0.05)
+                violation_cnt = int(outcome.episode_df.get("safety_violation", pd.Series(dtype=bool)).sum()) + int(outcome.episode_df.get("temperature_violation", pd.Series(dtype=bool)).sum())
+                invalid_cnt = int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).sum()) + int(outcome.episode_df.get("action_clamped", pd.Series(dtype=bool)).sum())
                 rows.append(
                     {
                         "seed": seed,
@@ -48,9 +59,9 @@ def run_benchmark(
                         "step_reward_sum": float(outcome.episode_df["reward"].sum()),
                         "terminal_reward": float(last.get("terminal_reward", 0.0)),
                         "steps": outcome.steps,
-                        "cum_tapped_kg": float(last["cum_tapped_kg"]),
-                        "tapped_t": float(last["cum_tapped_kg"]) / 1000.0,
-                        "tap_success": bool(float(last["cum_tapped_kg"]) > 0.0),
+                        "cum_tapped_kg": tapped_kg,
+                        "tapped_t": tapped_kg / 1000.0,
+                        "tap_success": bool(tapped_kg > 0.0),
                         "final_temp_c": float(last["bath_temp_c"]),
                         "cum_electric_mwh": float(last["cum_electric_mwh"]),
                         "cum_oxygen_nm3": float(last["cum_oxygen_nm3"]),
@@ -61,10 +72,18 @@ def run_benchmark(
                         "invalid_tap_count": int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).sum()),
                         "action_clamp_count": int(outcome.episode_df.get("action_clamped", pd.Series(dtype=bool)).sum()),
                         "max_bath_temp_c": float(outcome.episode_df["bath_temp_c"].max()),
-                        "baseline_tap_success_rate": 1.0 if policy_name == "baseline_schedule" and float(last["cum_tapped_kg"]) > 0.0 else 0.0,
-                        "baseline_tapped_kg": float(last["cum_tapped_kg"]) if policy_name == "baseline_schedule" else 0.0,
+                        "baseline_tap_success_rate": 1.0 if policy_name == "baseline_schedule" and tapped_kg > 0.0 else 0.0,
+                        "baseline_tapped_kg": tapped_kg if policy_name == "baseline_schedule" else 0.0,
                         "baseline_final_temp_c": float(last["bath_temp_c"]) if policy_name == "baseline_schedule" else 0.0,
                         "baseline_tap_reason": tap_reason if policy_name == "baseline_schedule" else "n/a",
+                        "energy_per_ton": energy_per_ton,
+                        "oxygen_per_ton": oxygen_per_ton,
+                        "natural_gas_per_ton": ng_per_ton,
+                        "tap_temperature_error": temp_err,
+                        "mass_error": mass_err,
+                        "carbon_error": carbon_err,
+                        "constraint_violation_rate": violation_cnt / max(outcome.steps, 1),
+                        "invalid_action_rate": invalid_cnt / max(outcome.steps, 1),
                     }
                 )
     return pd.DataFrame(rows)
