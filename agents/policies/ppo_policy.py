@@ -38,9 +38,11 @@ class PPOPolicy(BasePolicy):
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(path, actor_w=self.actor_w, value_w=self.value_w)
+        with path.open("wb") as f:
+            np.savez(f, actor_w=self.actor_w, value_w=self.value_w)
 
     @classmethod
     def load(cls, path: Path) -> "PPOPolicy":
-        ckpt = np.load(path)
+        load_path = path if path.exists() else Path(f"{path}.npz")
+        ckpt = np.load(load_path)
         return cls(actor_w=ckpt["actor_w"], value_w=ckpt["value_w"])
