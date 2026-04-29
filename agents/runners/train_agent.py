@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections import deque
 from typing import Callable
 from dataclasses import replace
@@ -53,7 +52,7 @@ def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_s
         logs.append({"episode": ep, "reward": total, "epsilon": eps})
     output_dir.mkdir(parents=True, exist_ok=True)
     policy.save(output_dir / "q_table.json")
-    pd.DataFrame(logs).to_csv(output_dir / "training_log.csv", index=False)
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
 def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
@@ -67,6 +66,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
+        total = 0.0
         eps = max(0.05, eps0 * (0.995**ep))
         for step in range(max_steps):
             if rng.random() < eps:
@@ -77,6 +77,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
             res = ctrl.step(action)
             replay.append((np.asarray(normalized_obs_vec(obs)), a_idx, res.reward, np.asarray(normalized_obs_vec(res.observation)), float(res.done)))
             obs = res.observation
+            total += res.reward
             if len(replay) >= 32:
                 idx = rng.choice(len(replay), size=32, replace=False)
                 batch = [replay[i] for i in idx]
@@ -90,8 +91,10 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 target_w = 0.98 * target_w + 0.02 * policy.weights
             if res.done:
                 break
+        logs.append({"episode": ep, "reward": total, "epsilon": eps})
     output_dir.mkdir(parents=True, exist_ok=True)
     policy.save(output_dir / "best_policy.npy")
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
 def _softmax(z: np.ndarray) -> np.ndarray:
@@ -164,7 +167,7 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     output_dir.mkdir(parents=True, exist_ok=True)
     if not (output_dir / "best_policy.pt").exists():
         policy.save(output_dir / "best_policy.pt")
-    pd.DataFrame(logs).to_csv(output_dir / "training_log.csv", index=False)
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
 def train_behavior_cloning(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
@@ -176,6 +179,7 @@ def train_behavior_cloning(base_cfg, episodes: int, seed: int, output_dir: Path,
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
+        total = 0.0
         for _ in range(max_steps):
             action = expert.act(obs)
             best = min(ACTION_NAMES, key=lambda k: abs(action["power_mw"] - safe_discrete_action(k, obs)["power_mw"]))
@@ -183,12 +187,53 @@ def train_behavior_cloning(base_cfg, episodes: int, seed: int, output_dir: Path,
             counts.setdefault(key, {})[best] = counts.setdefault(key, {}).get(best, 0) + 1
             res = ctrl.step(action)
             obs = res.observation
+            total += res.reward
             if res.done:
                 break
+        logs.append({"episode": ep, "reward": total})
     mapping = {k: max(v.items(), key=lambda kv: kv[1])[0] for k, v in counts.items()}
     bc = BehaviorCloningPolicy(mapping)
     output_dir.mkdir(parents=True, exist_ok=True)
     bc.save(output_dir / "policy.json")
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
+
+
+
+def train_trainable_adaptive_controller(base_cfg, iterations: int, seed: int, output_dir: Path, max_steps: int) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    best_score = float("-inf")
+    best_params = HeuristicParams()
+    logs = []
+    for i in range(1, iterations + 1):
+        candidate = HeuristicParams(float(rng.uniform(80, 120)), float(rng.uniform(55, 95)), float(rng.uniform(15, 45)), float(rng.uniform(0.8, 1.25)), float(rng.uniform(0.75, 1.3)))
+        ctrl = _controller(base_cfg, "base_case", seed + i)
+        out_ep = run_episode(ctrl, TrainablePolicy(candidate), policy_name="train_eval", max_steps=max_steps)
+        score = out_ep.total_reward
+        logs.append({"episode": i, "reward": score})
+        if score > best_score:
+            best_score = score
+            best_params = candidate
+            TrainablePolicy(params=best_params).save(output_dir / "best_policy.json")
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
+
+
+def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
+    rows=[]
+    expected={"trainable_adaptive_controller":"best_policy.json","behavior_cloning":"policy.json","q_learning":"q_table.json","dqn":"best_policy.npy","ppo":"best_policy.pt","safe_ppo_agentic_mpc":"best_policy.pt"}
+    for m,f in expected.items():
+        p=base_dir/m/f
+        curve=base_dir/m/'training_curve.csv'
+        reward_final=reward_best=float('nan')
+        if curve.exists():
+            df=pd.read_csv(curve)
+            if 'reward' in df.columns and not df.empty:
+                reward_final=float(df['reward'].iloc[-1]); reward_best=float(df['reward'].max())
+        rows.append({"model":m,"trained":m in trained,"checkpoint":str(p),"checkpoint_exists":p.exists(),"best_reward":reward_best,"final_reward":reward_final})
+    sdf=pd.DataFrame(rows)
+    sdf.to_csv(base_dir/'training_summary.csv',index=False)
+    html='<html><body><h1>Training Report</h1>'+sdf.to_html(index=False)+'</body></html>'
+    (base_dir/'training_report.html').write_text(html)
 
 
 
