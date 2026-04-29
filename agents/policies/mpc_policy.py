@@ -127,7 +127,7 @@ class MPCPolicy(BasePolicy):
         can_tap = bool(observation.get("can_tap", False))
         base = self._default_action(observation)
 
-        if 66.0 <= time_min <= 70.0 and can_tap:
+        if 58.0 <= time_min <= 61.0 and can_tap:
             return self._clip(
                 {
                     **base,
@@ -140,7 +140,7 @@ class MPCPolicy(BasePolicy):
         candidates = self._candidates(observation)
         best = max(candidates, key=lambda a: self._rollout_score(observation, a))
         melt = float(observation.get("melted_fraction", 0.0))
-        if time_min < 65.0 and melt < 0.98:
+        if time_min < 61.0 and melt < 0.98:
             best = self._clip(
                 {
                     **best,

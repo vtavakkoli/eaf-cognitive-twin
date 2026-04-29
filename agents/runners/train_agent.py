@@ -176,6 +176,7 @@ def train_behavior_cloning(base_cfg, episodes: int, seed: int, output_dir: Path,
     expert = MPCPolicy(horizon=8)
     disc = Discretizer()
     counts: dict[str, dict[str, int]] = {}
+    logs = []
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
@@ -224,15 +225,15 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
     for m,f in expected.items():
         p=base_dir/m/f
         curve=base_dir/m/'training_curve.csv'
-        reward_final=reward_best=float('nan')
+        reward_final=reward_best="n/a"
         if curve.exists():
             df=pd.read_csv(curve)
             if 'reward' in df.columns and not df.empty:
-                reward_final=float(df['reward'].iloc[-1]); reward_best=float(df['reward'].max())
+                reward_final=round(float(df['reward'].iloc[-1]), 6); reward_best=round(float(df['reward'].max()), 6)
         rows.append({"model":m,"trained":m in trained,"checkpoint":str(p),"checkpoint_exists":p.exists(),"best_reward":reward_best,"final_reward":reward_final})
     sdf=pd.DataFrame(rows)
     sdf.to_csv(base_dir/'training_summary.csv',index=False)
-    html='<html><body><h1>Training Report</h1>'+sdf.to_html(index=False)+'</body></html>'
+    html='<html><body><h1>Training Report</h1><p>n/a indicates reward metrics unavailable for that training run.</p>'+sdf.to_html(index=False)+'</body></html>'
     (base_dir/'training_report.html').write_text(html)
 
 
@@ -262,15 +263,15 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
     for m,f in expected.items():
         p=base_dir/m/f
         curve=base_dir/m/'training_curve.csv'
-        reward_final=reward_best=float('nan')
+        reward_final=reward_best="n/a"
         if curve.exists():
             df=pd.read_csv(curve)
             if 'reward' in df.columns and not df.empty:
-                reward_final=float(df['reward'].iloc[-1]); reward_best=float(df['reward'].max())
+                reward_final=round(float(df['reward'].iloc[-1]), 6); reward_best=round(float(df['reward'].max()), 6)
         rows.append({"model":m,"trained":m in trained,"checkpoint":str(p),"checkpoint_exists":p.exists(),"best_reward":reward_best,"final_reward":reward_final})
     sdf=pd.DataFrame(rows)
     sdf.to_csv(base_dir/'training_summary.csv',index=False)
-    html='<html><body><h1>Training Report</h1>'+sdf.to_html(index=False)+'</body></html>'
+    html='<html><body><h1>Training Report</h1><p>n/a indicates reward metrics unavailable for that training run.</p>'+sdf.to_html(index=False)+'</body></html>'
     (base_dir/'training_report.html').write_text(html)
 
 
@@ -283,7 +284,7 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "behavior_cloning", "all"], default="heuristic")
-    parser.add_argument("--max-steps", type=int, default=650)
+    parser.add_argument("--max-steps", type=int, default=610)
     parser.add_argument("--fast-dev-run", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.01)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -291,7 +292,7 @@ def main() -> None:
     parser.add_argument("--clip-epsilon", type=float, default=0.2)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--value-coef", type=float, default=0.5)
-    parser.add_argument("--rollout-steps", type=int, default=650)
+    parser.add_argument("--rollout-steps", type=int, default=610)
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()

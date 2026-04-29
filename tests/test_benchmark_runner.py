@@ -26,7 +26,7 @@ class NeverTapPolicy(BasePolicy):
 def test_benchmark_max_steps_and_csv_outputs():
     with tempfile.TemporaryDirectory() as td:
         out = Path(td)
-        df = run_benchmark(Path("configs/base_case.json"), {"baseline_schedule": IndustrialBaselineSchedulePolicy(), "rule_based": RuleBasedPolicy()}, out, seeds=[0], selected_scenarios=["base_case"], max_steps=650)
+        df = run_benchmark(Path("configs/base_case.json"), {"baseline_schedule": IndustrialBaselineSchedulePolicy(), "rule_based": RuleBasedPolicy()}, out, seeds=[0], selected_scenarios=["base_case"], max_steps=610)
         assert not df.empty
         assert (out / "timeseries").exists()
 

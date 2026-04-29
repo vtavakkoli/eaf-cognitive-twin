@@ -62,14 +62,21 @@ def _ci95(series: pd.Series) -> float:
 
 
 def _normalized_score(df: pd.DataFrame) -> pd.Series:
+    # balanced multi-objective score used for model selection
+    w_reward, w_success, w_energy, w_safety, w_robustness = 0.45, 0.25, 0.15, 0.10, 0.05
     energy = pd.to_numeric(df["energy_per_ton"], errors="coerce")
     energy_filled = energy.fillna(energy.max(skipna=True) if energy.notna().any() else 0.0)
+    reward_norm = (df["total_reward"] - df["total_reward"].min()) / max(df["total_reward"].max() - df["total_reward"].min(), 1e-9)
+    success_norm = df["tap_success"].astype(float)
+    energy_norm = 1.0 - (energy_filled - energy_filled.min()) / max(energy_filled.max() - energy_filled.min(), 1e-9)
+    safety_norm = 1.0 - (df["constraint_violation_rate"] - df["constraint_violation_rate"].min()) / max(df["constraint_violation_rate"].max() - df["constraint_violation_rate"].min(), 1e-9)
+    robustness_norm = 1.0 - (df["tap_temperature_error"] - df["tap_temperature_error"].min()) / max(df["tap_temperature_error"].max() - df["tap_temperature_error"].min(), 1e-9)
     out = (
-        0.45 * (df["total_reward"] - df["total_reward"].min()) / max(df["total_reward"].max() - df["total_reward"].min(), 1e-9)
-        + 0.25 * df["tap_success"].astype(float)
-        + 0.15 * (1.0 - (energy_filled - energy_filled.min()) / max(energy_filled.max() - energy_filled.min(), 1e-9))
-        + 0.10 * (1.0 - (df["constraint_violation_rate"] - df["constraint_violation_rate"].min()) / max(df["constraint_violation_rate"].max() - df["constraint_violation_rate"].min(), 1e-9))
-        + 0.05 * (1.0 - (df["tap_temperature_error"] - df["tap_temperature_error"].min()) / max(df["tap_temperature_error"].max() - df["tap_temperature_error"].min(), 1e-9))
+        w_reward * reward_norm
+        + w_success * success_norm
+        + w_energy * energy_norm
+        + w_safety * safety_norm
+        + w_robustness * robustness_norm
     )
     return out
 
@@ -100,6 +107,11 @@ def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
         action_clamp_count=("action_clamp_count", "sum"),
     )
     agg["normalized_score"] = _normalized_score(agg.rename(columns={"mean_reward": "total_reward", "success_rate": "tap_success"}))
+    agg["reward_norm"] = (agg["mean_reward"] - agg["mean_reward"].min()) / max(agg["mean_reward"].max() - agg["mean_reward"].min(), 1e-9)
+    agg["tap_success_norm"] = agg["success_rate"].astype(float)
+    agg["energy_efficiency_norm"] = 1.0 - (agg["energy_per_ton"] - agg["energy_per_ton"].min()) / max(agg["energy_per_ton"].max() - agg["energy_per_ton"].min(), 1e-9)
+    agg["safety_norm"] = 1.0 - (agg["constraint_violation_rate"] - agg["constraint_violation_rate"].min()) / max(agg["constraint_violation_rate"].max() - agg["constraint_violation_rate"].min(), 1e-9)
+    agg["scenario_robustness_norm"] = 1.0 - (agg["tap_temperature_error"] - agg["tap_temperature_error"].min()) / max(agg["tap_temperature_error"].max() - agg["tap_temperature_error"].min(), 1e-9)
     return agg.sort_values("normalized_score", ascending=False)
 
 
@@ -284,6 +296,9 @@ def _render_html(
             for f in figures
         ]
     )
+    score_equation = "normalized_score = w_reward*reward_norm + w_success*tap_success_norm + w_energy*energy_efficiency_norm + w_safety*safety_norm + w_robustness*scenario_robustness_norm"
+    score_cols = ["policy", "normalized_score", "reward_norm", "tap_success_norm", "energy_efficiency_norm", "safety_norm", "scenario_robustness_norm"]
+    score_components_html = _format_table(policy_stats[score_cols])
     html = f"""
 <html>
 <head>
@@ -308,13 +323,15 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 <div class='panel'>
 <h1>EAF Benchmark Report: {policy_list}</h1>
 <p>All policies are evaluated on Model C enhanced hybrid simulator.</p>
-<p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes.</p>
+<p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes (expected default: 61.0 min).</p>
 <p>Policies: {policy_list}</p>
 </div>
+<div class='panel'><h2>Balanced Multi-Objective Selection Rule</h2><p><code>{score_equation}</code></p><p>Weights: w_reward=0.45, w_success=0.25, w_energy=0.15, w_safety=0.10, w_robustness=0.05.</p><p>Best policy is selected by balanced normalized_score, not by raw reward only.</p></div>
 <div class='panel'><h2>KPI Cards</h2><div class='kpi-grid'>{kpi_cards}</div></div>
 <div class='panel'><h2>Policy Coverage</h2>{_format_table(policy_coverage)}</div>
 <div class='panel warning'><h2>Diagnostic Warnings</h2><ul>{warning_html}</ul></div>
 <div class='panel'><h2>Main result table (mean ± std)</h2>{_format_table(policy_stats)}</div>
+<div class='panel'><h2>Normalized score components by policy</h2>{score_components_html}</div>
 <div class='panel'><h2>Scenario-level ranking table</h2>{_format_table(scenario_rank)}</div>
 <div class='panel'><h2>Baseline comparison table</h2>{_format_table(comparison_df)}</div>
 <div class='panel'><h2>Statistical significance table</h2>{_format_table(stat_tests)}</div>
@@ -326,7 +343,7 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
     (output_dir / "result.html").write_text(html)
 
 
-def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], list[str], dict[str,str]]:
+def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], list[str], dict[str, str], list[str]]:
     policies: dict[str, BasePolicy] = {
         "baseline_schedule": IndustrialBaselineSchedulePolicy(),
         "rule_based": RuleBasedPolicy(),
@@ -334,6 +351,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
     }
     missing_required: list[str] = []
     checkpoint_status: dict[str, str] = {}
+    checkpoint_warnings: list[str] = []
 
     tac_path = args.training_dir / "trainable_adaptive_controller" / "best_policy.json"
     if tac_path.exists():
@@ -353,8 +371,18 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
         }
         for name, (path, loader) in ckpts.items():
             if path.exists():
-                policies[name] = loader(path)
-                checkpoint_status[name] = "loaded"
+                try:
+                    loaded = loader(path)
+                    if name == "dqn" and getattr(loaded, "weights", np.zeros((1, 1))).shape[1] != 13:
+                        checkpoint_status[name] = "checkpoint architecture mismatch"
+                        checkpoint_warnings.append(f"DQN checkpoint architecture mismatch at {path}")
+                    else:
+                        policies[name] = loaded
+                        checkpoint_status[name] = "loaded"
+                except Exception as exc:
+                    checkpoint_status[name] = f"checkpoint load error: {type(exc).__name__}"
+                    checkpoint_warnings.append(f"{name} checkpoint load failed ({type(exc).__name__}) at {path}")
+                    missing_required.append(name)
             else:
                 checkpoint_status[name] = "missing checkpoint"
                 missing_required.append(name)
@@ -367,7 +395,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             + ", ".join(missing_required)
             + ". Pass --allow-missing-rl-baselines to continue."
         )
-    return policies, missing_required, checkpoint_status
+    return policies, missing_required, checkpoint_status, checkpoint_warnings
 
 
 def _write_tap_diagnostics(summary_df: pd.DataFrame, output_dir: Path) -> None:
@@ -398,7 +426,7 @@ def main() -> None:
     parser.add_argument("--model", choices=["C"], default="C")
     parser.add_argument("--mpc-horizon", type=int, default=8)
     parser.add_argument("--report-format", default="html,csv,md")
-    parser.add_argument("--max-steps", type=int, default=650)
+    parser.add_argument("--max-steps", type=int, default=610)
     parser.add_argument("--include-rl-baselines", action="store_true")
     parser.add_argument("--allow-missing-rl-baselines", action="store_true")
     args = parser.parse_args()
@@ -406,7 +434,7 @@ def main() -> None:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    policies, missing_required, checkpoint_status = _build_policies(args)
+    policies, missing_required, checkpoint_status, checkpoint_warnings = _build_policies(args)
     evaluated_policies = list(policies.keys())
 
     seeds = list(range(args.seeds))
@@ -477,6 +505,7 @@ def main() -> None:
     warnings: list[str] = []
     if missing_required:
         warnings.append(f"Missing required policies/checkpoints (allowed): {', '.join(missing_required)}")
+    warnings.extend(checkpoint_warnings)
     dt_s = float(load_config(args.config).dt_s)
     simulated_minutes = args.max_steps * dt_s / 60.0
     tap_window_start_min = min(60.0, float(load_config(args.config).heat_duration_min) - 5.0)
