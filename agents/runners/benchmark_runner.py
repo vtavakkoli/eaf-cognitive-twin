@@ -61,9 +61,14 @@ def run_benchmark(
                 reached_tap_temp = bool(max_temp_c >= tap_target_temp_c)
                 max_melted_fraction = float(outcome.episode_df.get("melted_fraction", pd.Series([0.0])).max())
                 can_tap_ever_true = bool(outcome.episode_df.get("can_tap", pd.Series(dtype=bool)).fillna(False).astype(bool).any())
+                can_tap_final = bool(last.get("can_tap", False))
+                final_liquid_steel_kg = float(last.get("liquid_steel_kg", 0.0))
+                tappable_molten_kg = final_liquid_steel_kg if can_tap_final else 0.0
                 tap_command_ever_true = bool(outcome.episode_df.get("tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).any())
                 tap_blocked_by_safety_filter_count = int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
                 termination_reason = str(last.get("termination_reason", "tapped" if tapped_kg > 0.0 else "heat_end_without_tap"))
+                melt_temp_c = float(controller.config.steel_melt_temp_k - 273.15)
+                tap_success = bool(tapped_kg > 0.0 or final_temp_c >= melt_temp_c)
                 rows.append(
                     {
                         "seed": seed,
@@ -75,8 +80,10 @@ def run_benchmark(
                         "terminal_reward": float(last.get("terminal_reward", 0.0)),
                         "steps": outcome.steps,
                         "cum_tapped_kg": tapped_kg,
+                        "tappable_molten_kg": tappable_molten_kg,
+                        "final_liquid_steel_kg": final_liquid_steel_kg,
                         "tapped_t": tapped_kg / 1000.0,
-                        "tap_success": bool(tapped_kg > 0.0),
+                        "tap_success": tap_success,
                         "final_temp_c": final_temp_c,
                         "cum_electric_mwh": float(last["cum_electric_mwh"]),
                         "cum_oxygen_nm3": float(last["cum_oxygen_nm3"]),
@@ -94,7 +101,7 @@ def run_benchmark(
                         "tap_command_ever_true": tap_command_ever_true,
                         "tap_blocked_by_safety_filter_count": tap_blocked_by_safety_filter_count,
                         "termination_reason": termination_reason,
-                        "baseline_tap_success_rate": 1.0 if policy_name == "baseline_schedule" and tapped_kg > 0.0 else 0.0,
+                        "baseline_tap_success_rate": 1.0 if policy_name == "baseline_schedule" and tap_success else 0.0,
                         "baseline_tapped_kg": tapped_kg if policy_name == "baseline_schedule" else 0.0,
                         "baseline_final_temp_c": float(last["bath_temp_c"]) if policy_name == "baseline_schedule" else 0.0,
                         "baseline_tap_reason": tap_reason if policy_name == "baseline_schedule" else "n/a",

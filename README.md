@@ -60,7 +60,7 @@ python -m agents.runners.run_agent \
   --seeds 30 \
   --n-scenarios 6 \
   --model C \
-  --max-steps 650 \
+  --max-steps 610 \
   --mpc-horizon 8 \
   --include-rl-baselines \
   --report-format html,csv,md
@@ -79,7 +79,7 @@ python -m agents.runners.run_agent \
   --seeds 30 \
   --n-scenarios 6 \
   --model C \
-  --max-steps 650 \
+  --max-steps 610 \
   --mpc-horizon 8 \
   --include-rl-baselines \
   --report-format html,csv,md

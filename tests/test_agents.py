@@ -170,12 +170,12 @@ class TestAgentRunners(unittest.TestCase):
 
 
 
-    def test_run_episode_max_steps_650(self):
+    def test_run_episode_max_steps_610(self):
         from agents.runners.episode_runner import run_episode
 
         ctrl = EAFController(default_config(), enhanced_model=True)
-        out = run_episode(ctrl, RuleBasedPolicy(), policy_name="rule_based", max_steps=650)
-        self.assertLessEqual(out.steps, 650)
+        out = run_episode(ctrl, RuleBasedPolicy(), policy_name="rule_based", max_steps=610)
+        self.assertLessEqual(out.steps, 610)
 
     def test_required_kpis_exist_in_summary(self):
         with tempfile.TemporaryDirectory() as td:
