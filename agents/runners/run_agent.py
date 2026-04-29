@@ -326,34 +326,38 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
     (output_dir / "result.html").write_text(html)
 
 
-def _load_or_default(path: Path, loader, default_ctor):
-    if path.exists():
-        return loader(path)
-    return default_ctor()
-
-
-def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], list[str]]:
+def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], list[str], dict[str,str]]:
     policies: dict[str, BasePolicy] = {
         "baseline_schedule": IndustrialBaselineSchedulePolicy(),
         "rule_based": RuleBasedPolicy(),
         "mpc": MPCPolicy(horizon=args.mpc_horizon),
     }
     missing_required: list[str] = []
+    checkpoint_status: dict[str, str] = {}
 
-    policies["trainable_adaptive_controller"] = (
-        TrainablePolicy.load(args.trained_policy) if args.trained_policy.exists() else TrainablePolicy()
-    )
+    tac_path = args.training_dir / "trainable_adaptive_controller" / "best_policy.json"
+    if tac_path.exists():
+        policies["trainable_adaptive_controller"] = TrainablePolicy.load(tac_path)
+        checkpoint_status["trainable_adaptive_controller"] = "loaded"
+    else:
+        missing_required.append("trainable_adaptive_controller")
+        checkpoint_status["trainable_adaptive_controller"] = "missing checkpoint"
 
     if args.include_rl_baselines:
-        policies["q_learning"] = _load_or_default(Path("results/agent_training/q_learning/q_table.json"), QLearningPolicy.load, QLearningPolicy)
-        policies["dqn"] = _load_or_default(Path("results/agent_training/dqn/best_policy.npy"), DQNPolicy.load, DQNPolicy)
-        policies["ppo"] = _load_or_default(Path("results/agent_training/ppo/best_policy.pt"), PPOPolicy.load, PPOPolicy)
-        policies["behavior_cloning"] = _load_or_default(Path("results/agent_training/behavior_cloning/policy.json"), BehaviorCloningPolicy.load, BehaviorCloningPolicy)
-        policies["safe_ppo_agentic_mpc"] = (
-            SafePPOAgenticMPCPolicy.load(Path("results/agent_training/safe_ppo_agentic_mpc/best_policy.pt"), horizon=args.mpc_horizon)
-            if Path("results/agent_training/safe_ppo_agentic_mpc/best_policy.pt").exists()
-            else SafePPOAgenticMPCPolicy(horizon=args.mpc_horizon)
-        )
+        ckpts = {
+            "q_learning": (args.training_dir / "q_learning" / "q_table.json", QLearningPolicy.load),
+            "dqn": (args.training_dir / "dqn" / "best_policy.npy", DQNPolicy.load),
+            "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
+            "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
+            "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
+        }
+        for name, (path, loader) in ckpts.items():
+            if path.exists():
+                policies[name] = loader(path)
+                checkpoint_status[name] = "loaded"
+            else:
+                checkpoint_status[name] = "missing checkpoint"
+                missing_required.append(name)
         policies["sac_inspired"] = SACInspiredPolicy()
         policies["td3_inspired"] = TD3InspiredPolicy()
 
@@ -363,7 +367,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             + ", ".join(missing_required)
             + ". Pass --allow-missing-rl-baselines to continue."
         )
-    return policies, missing_required
+    return policies, missing_required, checkpoint_status
 
 
 def _write_tap_diagnostics(summary_df: pd.DataFrame, output_dir: Path) -> None:
@@ -388,7 +392,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run trained/default agent benchmark over EAF scenarios")
     parser.add_argument("--config", type=Path, default=Path("configs/base_case.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("results/agent_run"))
-    parser.add_argument("--trained-policy", type=Path, default=Path("results/agent_training/checkpoints/best_policy.json"))
+    parser.add_argument("--training-dir", type=Path, default=Path("results/agent_training"))
     parser.add_argument("--seeds", type=int, default=30)
     parser.add_argument("--n-scenarios", type=int, default=6)
     parser.add_argument("--model", choices=["C"], default="C")
@@ -402,7 +406,7 @@ def main() -> None:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    policies, missing_required = _build_policies(args)
+    policies, missing_required, checkpoint_status = _build_policies(args)
     evaluated_policies = list(policies.keys())
 
     seeds = list(range(args.seeds))
@@ -465,6 +469,7 @@ def main() -> None:
     stat_tests.to_csv(output_dir / "statistical_tests.csv", index=False)
 
     policy_coverage = _build_policy_coverage(summary_df, evaluated_policies)
+    policy_coverage["checkpoint_status"] = policy_coverage["policy"].map(checkpoint_status).fillna("n/a")
     policy_coverage.to_csv(output_dir / "policy_coverage.csv", index=False)
 
     _write_tap_diagnostics(summary_df, output_dir)

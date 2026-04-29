@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import deque
+from typing import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -191,6 +192,44 @@ def train_behavior_cloning(base_cfg, episodes: int, seed: int, output_dir: Path,
 
 
 
+def train_trainable_adaptive_controller(base_cfg, iterations: int, seed: int, output_dir: Path, max_steps: int) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    best_score = float("-inf")
+    best_params = HeuristicParams()
+    logs = []
+    for i in range(1, iterations + 1):
+        candidate = HeuristicParams(float(rng.uniform(80, 120)), float(rng.uniform(55, 95)), float(rng.uniform(15, 45)), float(rng.uniform(0.8, 1.25)), float(rng.uniform(0.75, 1.3)))
+        ctrl = _controller(base_cfg, "base_case", seed + i)
+        out_ep = run_episode(ctrl, TrainablePolicy(candidate), policy_name="train_eval", max_steps=max_steps)
+        score = out_ep.total_reward
+        logs.append({"episode": i, "reward": score})
+        if score > best_score:
+            best_score = score
+            best_params = candidate
+            TrainablePolicy(params=best_params).save(output_dir / "best_policy.json")
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
+
+
+def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
+    rows=[]
+    expected={"trainable_adaptive_controller":"best_policy.json","behavior_cloning":"policy.json","q_learning":"q_table.json","dqn":"best_policy.npy","ppo":"best_policy.pt","safe_ppo_agentic_mpc":"best_policy.pt"}
+    for m,f in expected.items():
+        p=base_dir/m/f
+        curve=base_dir/m/'training_curve.csv'
+        reward_final=reward_best=float('nan')
+        if curve.exists():
+            df=pd.read_csv(curve)
+            if 'reward' in df.columns and not df.empty:
+                reward_final=float(df['reward'].iloc[-1]); reward_best=float(df['reward'].max())
+        rows.append({"model":m,"trained":m in trained,"checkpoint":str(p),"checkpoint_exists":p.exists(),"best_reward":reward_best,"final_reward":reward_final})
+    sdf=pd.DataFrame(rows)
+    sdf.to_csv(base_dir/'training_summary.csv',index=False)
+    html='<html><body><h1>Training Report</h1>'+sdf.to_html(index=False)+'</body></html>'
+    (base_dir/'training_report.html').write_text(html)
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train/tune EAF control policies")
     parser.add_argument("--config", type=Path, default=Path("configs/base_case.json"))
@@ -198,7 +237,7 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "behavior_cloning"], default="heuristic")
+    parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "behavior_cloning", "all"], default="heuristic")
     parser.add_argument("--max-steps", type=int, default=650)
     parser.add_argument("--fast-dev-run", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.01)
@@ -207,43 +246,34 @@ def main() -> None:
     parser.add_argument("--clip-epsilon", type=float, default=0.2)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--value-coef", type=float, default=0.5)
-    parser.add_argument("--rollout-steps", type=int, default=128)
+    parser.add_argument("--rollout-steps", type=int, default=650)
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
 
     base_cfg = load_config(args.config)
     episodes = min(args.episodes, 5) if args.fast_dev_run else args.episodes
-    if args.algorithm == "q_learning":
-        train_q_learning(base_cfg, episodes, args.seed, args.output_dir, args.max_steps)
-    elif args.algorithm == "dqn":
-        train_dqn(base_cfg, episodes, args.seed, args.output_dir, args.max_steps)
-    elif args.algorithm == "ppo":
-        train_ppo(base_cfg, episodes, args.seed, args.output_dir, args.max_steps, safe_hybrid=False, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size)
-    elif args.algorithm == "safe_ppo_agentic_mpc":
-        train_ppo(base_cfg, episodes, args.seed, args.output_dir, args.max_steps, safe_hybrid=True, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size)
-    elif args.algorithm == "behavior_cloning":
-        train_behavior_cloning(base_cfg, episodes, args.seed, args.output_dir, args.max_steps)
+    train_map = {
+        "trainable_adaptive_controller": lambda: train_trainable_adaptive_controller(base_cfg, args.iterations, args.seed, args.output_dir / "trainable_adaptive_controller", args.max_steps),
+        "behavior_cloning": lambda: train_behavior_cloning(base_cfg, episodes, args.seed, args.output_dir / "behavior_cloning", args.max_steps),
+        "q_learning": lambda: train_q_learning(base_cfg, episodes, args.seed, args.output_dir / "q_learning", args.max_steps),
+        "dqn": lambda: train_dqn(base_cfg, episodes, args.seed, args.output_dir / "dqn", args.max_steps),
+        "ppo": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "ppo", args.max_steps, safe_hybrid=False, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
+        "safe_ppo_agentic_mpc": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_mpc", args.max_steps, safe_hybrid=True, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
+    }
+    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","safe_ppo_agentic_mpc"]
+    if args.algorithm == "heuristic":
+        train_map["trainable_adaptive_controller"](); trained=["trainable_adaptive_controller"]
+    elif args.algorithm == "all":
+        trained=[]
+        for name in order:
+            train_map[name](); trained.append(name)
     else:
-        # legacy heuristic random search
-        from agents.policies.trainable_policy import TrainablePolicy
-
-        out = args.output_dir
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "checkpoints").mkdir(parents=True, exist_ok=True)
-        rng = np.random.default_rng(args.seed)
-        best_score = float("-inf")
-        best_params = HeuristicParams()
-        for i in range(1, args.iterations + 1):
-            candidate = HeuristicParams(float(rng.uniform(80, 120)), float(rng.uniform(55, 95)), float(rng.uniform(15, 45)), float(rng.uniform(0.8, 1.25)), float(rng.uniform(0.75, 1.3)))
-            ctrl = _controller(base_cfg, "base_case", args.seed + i)
-            out_ep = run_episode(ctrl, TrainablePolicy(candidate), policy_name="train_eval", max_steps=args.max_steps)
-            score = out_ep.total_reward
-            if score > best_score:
-                best_score = score
-                best_params = candidate
-                TrainablePolicy(params=best_params).save(out / "checkpoints" / "best_policy.json")
-        (out / "training_summary.json").write_text(json.dumps({"best_score": best_score, "best_params": best_params.__dict__}, indent=2))
+        train_map[args.algorithm](); trained=[args.algorithm]
+    if (args.output_dir / "trainable_adaptive_controller" / "best_policy.json").exists():
+        (args.output_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (args.output_dir / "checkpoints" / "best_policy.json").write_text((args.output_dir / "trainable_adaptive_controller" / "best_policy.json").read_text())
+    _collect_training_report(args.output_dir, trained)
 
 
 if __name__ == "__main__":
