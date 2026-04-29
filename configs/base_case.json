@@ -88,7 +88,7 @@
       "start_min": 55.0, "end_min": 60.0, "power_mw": 50, "oxygen_nm3_min": 40, "ng_nm3_min": 4, "carbon_kg_min": 6, "flux_kg_min": 0
     },
     {
-      "start_min": 60.0, "end_min": 65.0, "power_mw": 20, "oxygen_nm3_min": 10, "ng_nm3_min": 2, "carbon_kg_min": 0, "flux_kg_min": 0
+      "start_min": 60.0, "end_min": 61.0, "power_mw": 20, "oxygen_nm3_min": 10, "ng_nm3_min": 2, "carbon_kg_min": 0, "flux_kg_min": 0
     }
   ],
   "charge_events": [
@@ -108,7 +108,7 @@
       "dri_kg": 0.0
     }
   ],
-  "heat_duration_min": 65.0,
+  "heat_duration_min": 61.0,
   "dt_s": 6.0,
   "max_temp_c": 1850.0,
   "min_temp_c": 20.0,
