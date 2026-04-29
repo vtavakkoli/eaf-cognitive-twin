@@ -63,6 +63,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     gamma = 0.99
     lr = 0.02
     eps0 = 1.0
+    logs = []
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
