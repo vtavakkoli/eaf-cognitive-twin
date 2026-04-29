@@ -89,7 +89,7 @@ def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
         reward_ci95=("total_reward", _ci95),
         success_rate=("tap_success", "mean"),
         success_std=("tap_success", "std"),
-        mean_tapped_kg=("cum_tapped_kg", "mean"),
+        mean_tapped_kg=("tappable_molten_kg", "mean"),
         mean_electric_mwh=("cum_electric_mwh", "mean"),
         mean_oxygen_nm3=("cum_oxygen_nm3", "mean"),
         mean_ng_nm3=("cum_ng_nm3", "mean"),
