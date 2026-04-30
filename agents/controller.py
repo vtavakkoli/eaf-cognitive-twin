@@ -98,7 +98,7 @@ class EAFController:
         obs.update({k: v for k, v in last_extras.items() if k.startswith("reward_") or k.startswith("penalty_") or k == "terminal_reward"})
         return obs
 
-    def _reward_components(self, safety_flags: dict[str, bool | str]) -> dict[str, float]:
+    def _reward_components(self, safety_flags: dict[str, bool | str], done: bool) -> dict[str, float]:
         s = self.state
         assert s is not None
         cfg = self.config
@@ -116,7 +116,17 @@ class EAFController:
         penalty_temperature_violation = -50.0 if bool(safety_flags.get("temperature_violation", False)) else 0.0
         penalty_invalid_tap = -10.0 if bool(safety_flags.get("invalid_tap_command", False)) else 0.0
         penalty_action_smoothness = 0.0
-        terminal_reward = 50.0 if s.tap_end_time_s is not None else -20.0
+        final_phase_bonus = 0.0
+        final_phase_penalty = 0.0
+        if done and s.tap_end_time_s is None:
+            if temp_c < cfg.steel_melt_temp_c:
+                # Hard failure: episode ends cold at 61 min and cannot tap useful steel.
+                final_phase_penalty = -250.0 - 2.0 * (cfg.steel_melt_temp_c - temp_c)
+            else:
+                # Encourage agents to finish at least above melt temperature even if they miss tap.
+                final_phase_bonus = 25.0
+
+        terminal_reward = 50.0 if s.tap_end_time_s is not None else -20.0 + final_phase_bonus + final_phase_penalty
         step_reward = sum(
             [
                 reward_tap_success,
@@ -143,7 +153,9 @@ class EAFController:
             "penalty_temperature_violation": penalty_temperature_violation,
             "penalty_invalid_tap": penalty_invalid_tap,
             "penalty_action_smoothness": penalty_action_smoothness,
-            "terminal_reward": terminal_reward if s.tap_end_time_s is not None else 0.0,
+            "reward_final_phase_bonus": final_phase_bonus,
+            "penalty_final_phase_cold_bath": final_phase_penalty,
+            "terminal_reward": terminal_reward if done else 0.0,
         }
 
     def step(self, action: ActionDict) -> StepResult:
@@ -168,7 +180,7 @@ class EAFController:
         self.prev_action = safe_action
 
         done = self.state.tap_end_time_s is not None or (self.state.time_s / 60.0) >= max(self.config.heat_duration_min, self.tap_window_end_min)
-        reward_components = self._reward_components(safety_flags)
+        reward_components = self._reward_components(safety_flags, done)
         obs = self._observation({**extras, **reward_components})
         info = {"warnings": list(self.warnings), "safe_action": safe_action, **extras, **safety_flags, "is_downtime": is_down, **reward_components}
         return StepResult(observation=obs, reward=reward_components["step_reward"] + reward_components["terminal_reward"], done=done, info=info)

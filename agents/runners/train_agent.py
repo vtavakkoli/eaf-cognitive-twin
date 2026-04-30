@@ -29,11 +29,22 @@ def _controller(base_cfg, scenario: str, seed: int) -> EAFController:
     return EAFController(replace(sc[scenario], random_seed=seed), enhanced_model=True)
 
 
+
+
+def _episode_success(obs: dict, cfg) -> bool:
+    return float(obs.get("bath_temp_c", 0.0)) >= float(cfg.steel_melt_temp_c)
+
+
+def _should_early_stop(successes: deque, min_episodes: int = 80) -> bool:
+    if len(successes) < min_episodes:
+        return False
+    return sum(successes) / len(successes) >= 0.92
 def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
     rng = np.random.default_rng(seed)
     policy = QLearningPolicy(epsilon=1.0, seed=seed)
     alpha, gamma = 0.15, 0.99
     logs = []
+    recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         controller = _controller(base_cfg, "base_case", seed + ep)
         obs = controller.reset(); total = 0.0
@@ -49,7 +60,11 @@ def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_s
             obs = res.observation; total += res.reward
             if res.done:
                 break
-        logs.append({"episode": ep, "reward": total, "epsilon": eps})
+        success = int(_episode_success(obs, controller.config))
+        recent_success.append(success)
+        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success})
+        if _should_early_stop(recent_success):
+            break
     output_dir.mkdir(parents=True, exist_ok=True)
     policy.save(output_dir / "q_table.json")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
@@ -64,6 +79,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     lr = 0.02
     eps0 = 1.0
     logs = []
+    recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
@@ -92,7 +108,11 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 target_w = 0.98 * target_w + 0.02 * policy.weights
             if res.done:
                 break
-        logs.append({"episode": ep, "reward": total, "epsilon": eps})
+        success = int(_episode_success(obs, ctrl.config))
+        recent_success.append(success)
+        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success})
+        if _should_early_stop(recent_success):
+            break
     output_dir.mkdir(parents=True, exist_ok=True)
     policy.save(output_dir / "best_policy.npy")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
@@ -109,6 +129,7 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     policy = PPOPolicy()
     best = -1e18
     logs = []
+    recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
@@ -164,7 +185,11 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                     policy.actor_w -= learning_rate * np.outer(grad_logits, x)
                     vpred = float(policy.value_w @ x)
                     policy.value_w -= learning_rate * value_coef * 2.0 * (vpred - ret[j]) * x
-        logs.append({"episode": ep, "reward": total})
+        success = int(_episode_success(obs, ctrl.config))
+        recent_success.append(success)
+        logs.append({"episode": ep, "reward": total, "success": success})
+        if _should_early_stop(recent_success):
+            break
     output_dir.mkdir(parents=True, exist_ok=True)
     if not (output_dir / "best_policy.pt").exists():
         policy.save(output_dir / "best_policy.pt")
@@ -221,61 +246,55 @@ def train_trainable_adaptive_controller(base_cfg, iterations: int, seed: int, ou
 
 
 def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
-    rows=[]
-    expected={"trainable_adaptive_controller":"best_policy.json","behavior_cloning":"policy.json","q_learning":"q_table.json","dqn":"best_policy.npy","ppo":"best_policy.pt","safe_ppo_agentic_mpc":"best_policy.pt"}
-    for m,f in expected.items():
-        p=base_dir/m/f
-        curve=base_dir/m/'training_curve.csv'
-        reward_final=reward_best="n/a"
+    def _svg_line_plot(df: pd.DataFrame, y_col: str, title: str, color: str) -> str:
+        if y_col not in df.columns or df.empty:
+            return f"<p>{title}: n/a</p>"
+        x = pd.to_numeric(df["episode"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        y = pd.to_numeric(df[y_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        if len(x) < 2:
+            return f"<p>{title}: insufficient data</p>"
+        w, h, pad = 560.0, 220.0, 24.0
+        x_span = max(1e-9, float(x.max() - x.min()))
+        y_span = max(1e-9, float(y.max() - y.min()))
+        pts = []
+        for xi, yi in zip(x, y):
+            px = pad + (xi - x.min()) / x_span * (w - 2 * pad)
+            py = h - pad - (yi - y.min()) / y_span * (h - 2 * pad)
+            pts.append(f"{px:.2f},{py:.2f}")
+        return (
+            f"<div><h4>{title}</h4>"
+            f"<svg width='{int(w)}' height='{int(h)}' style='border:1px solid #ddd;background:#fff'>"
+            f"<polyline points='{' '.join(pts)}' fill='none' stroke='{color}' stroke-width='2'/>"
+            f"</svg></div>"
+        )
+
+    rows = []
+    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.npy", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_policy.pt"}
+    chart_blocks: list[str] = []
+    for m, f in expected.items():
+        p = base_dir / m / f
+        curve = base_dir / m / "training_curve.csv"
+        reward_final = reward_best = "n/a"
         if curve.exists():
-            df=pd.read_csv(curve)
-            if 'reward' in df.columns and not df.empty:
-                reward_final=round(float(df['reward'].iloc[-1]), 6); reward_best=round(float(df['reward'].max()), 6)
-        rows.append({"model":m,"trained":m in trained,"checkpoint":str(p),"checkpoint_exists":p.exists(),"best_reward":reward_best,"final_reward":reward_final})
-    sdf=pd.DataFrame(rows)
-    sdf.to_csv(base_dir/'training_summary.csv',index=False)
-    html='<html><body><h1>Training Report</h1><p>n/a indicates reward metrics unavailable for that training run.</p>'+sdf.to_html(index=False)+'</body></html>'
-    (base_dir/'training_report.html').write_text(html)
-
-
-
-def train_trainable_adaptive_controller(base_cfg, iterations: int, seed: int, output_dir: Path, max_steps: int) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(seed)
-    best_score = float("-inf")
-    best_params = HeuristicParams()
-    logs = []
-    for i in range(1, iterations + 1):
-        candidate = HeuristicParams(float(rng.uniform(80, 120)), float(rng.uniform(55, 95)), float(rng.uniform(15, 45)), float(rng.uniform(0.8, 1.25)), float(rng.uniform(0.75, 1.3)))
-        ctrl = _controller(base_cfg, "base_case", seed + i)
-        out_ep = run_episode(ctrl, TrainablePolicy(candidate), policy_name="train_eval", max_steps=max_steps)
-        score = out_ep.total_reward
-        logs.append({"episode": i, "reward": score})
-        if score > best_score:
-            best_score = score
-            best_params = candidate
-            TrainablePolicy(params=best_params).save(output_dir / "best_policy.json")
-    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
-
-
-def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
-    rows=[]
-    expected={"trainable_adaptive_controller":"best_policy.json","behavior_cloning":"policy.json","q_learning":"q_table.json","dqn":"best_policy.npy","ppo":"best_policy.pt","safe_ppo_agentic_mpc":"best_policy.pt"}
-    for m,f in expected.items():
-        p=base_dir/m/f
-        curve=base_dir/m/'training_curve.csv'
-        reward_final=reward_best="n/a"
-        if curve.exists():
-            df=pd.read_csv(curve)
-            if 'reward' in df.columns and not df.empty:
-                reward_final=round(float(df['reward'].iloc[-1]), 6); reward_best=round(float(df['reward'].max()), 6)
-        rows.append({"model":m,"trained":m in trained,"checkpoint":str(p),"checkpoint_exists":p.exists(),"best_reward":reward_best,"final_reward":reward_final})
-    sdf=pd.DataFrame(rows)
-    sdf.to_csv(base_dir/'training_summary.csv',index=False)
-    html='<html><body><h1>Training Report</h1><p>n/a indicates reward metrics unavailable for that training run.</p>'+sdf.to_html(index=False)+'</body></html>'
-    (base_dir/'training_report.html').write_text(html)
-
-
+            df = pd.read_csv(curve)
+            if "reward" in df.columns and not df.empty:
+                reward_final = round(float(df["reward"].iloc[-1]), 6)
+                reward_best = round(float(df["reward"].max()), 6)
+                reward_chart = _svg_line_plot(df, "reward", f"{m}: reward vs episode", "#1f77b4")
+                success_chart = _svg_line_plot(df, "success", f"{m}: success vs episode", "#2ca02c")
+                chart_blocks.append(f"<section><h3>{m}</h3>{reward_chart}{success_chart}</section>")
+        rows.append({"model": m, "trained": m in trained, "checkpoint": str(p), "checkpoint_exists": p.exists(), "best_reward": reward_best, "final_reward": reward_final})
+    sdf = pd.DataFrame(rows)
+    sdf.to_csv(base_dir / "training_summary.csv", index=False)
+    html = (
+        "<html><body><h1>Training Report</h1>"
+        "<p>n/a indicates reward metrics unavailable for that training run.</p>"
+        + sdf.to_html(index=False)
+        + "<h2>Training Progress Charts</h2>"
+        + ("".join(chart_blocks) if chart_blocks else "<p>No training curves found.</p>")
+        + "</body></html>"
+    )
+    (base_dir / "training_report.html").write_text(html)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train/tune EAF control policies")
