@@ -28,6 +28,9 @@ class EAFController:
         self._last_cum_electric_mwh = 0.0
         self._last_cum_oxygen_nm3 = 0.0
         self._last_cum_ng_nm3 = 0.0
+        self._last_melted_fraction = 0.0
+        self._last_liquid_steel_kg = 0.0
+        self._last_can_tap = False
 
     @classmethod
     def from_path(cls, config_path=None, enhanced_model: bool = True) -> "EAFController":
@@ -45,6 +48,9 @@ class EAFController:
         self._last_cum_electric_mwh = 0.0
         self._last_cum_oxygen_nm3 = 0.0
         self._last_cum_ng_nm3 = 0.0
+        self._last_melted_fraction = 0.0
+        self._last_liquid_steel_kg = 0.0
+        self._last_can_tap = False
         return self._observation(last_extras={})
 
     def default_schedule_action(self) -> ActionDict:
@@ -124,18 +130,23 @@ class EAFController:
         penalty_temperature_violation = -50.0 if bool(safety_flags.get("temperature_violation", False)) else 0.0
         penalty_invalid_tap = -10.0 if bool(safety_flags.get("invalid_tap_command", False)) else 0.0
         penalty_action_smoothness = 0.0
+        reward_progress_melt = max(0.0, float(s.melted_fraction) - self._last_melted_fraction) * 160.0
+        reward_progress_liquid = max(0.0, float(s.liquid_steel_kg) - self._last_liquid_steel_kg) / 80.0
+        can_tap_now = bool(self._can_tap())
+        reward_reach_can_tap = 20.0 if can_tap_now and not self._last_can_tap else 0.0
         final_phase_bonus = 0.0
         final_phase_penalty = 0.0
         if done and s.tap_end_time_s is None:
             if temp_c < cfg.steel_melt_temp_c:
                 # Hard failure: episode ends cold at 61 min and cannot tap useful steel.
-                final_phase_penalty = -250.0 - 2.0 * (cfg.steel_melt_temp_c - temp_c)
+                final_phase_penalty = -450.0 - 3.5 * (cfg.steel_melt_temp_c - temp_c)
             else:
                 # Encourage agents to finish at least above melt temperature even if they miss tap.
-                final_phase_bonus = 25.0
+                final_phase_bonus = 10.0
+            final_phase_penalty += -180.0
 
         if done and s.tap_end_time_s is not None:
-            reward_tap_success = 300.0
+            reward_tap_success = 420.0
             reward_mass_quality = -abs(s.cum_tapped_kg - cfg.tap_target_steel_kg) / 900.0
             reward_temp_quality = -abs(temp_c - tap_target) / 8.0
         terminal_reward = reward_tap_success + reward_mass_quality + reward_temp_quality if s.tap_end_time_s is not None else max(-300.0, -40.0 + final_phase_bonus + final_phase_penalty)
@@ -151,6 +162,9 @@ class EAFController:
                 penalty_temperature_violation,
                 penalty_invalid_tap,
                 penalty_action_smoothness,
+                reward_progress_melt,
+                reward_progress_liquid,
+                reward_reach_can_tap,
             ]
         )
         raw_reward = step_reward + (terminal_reward if done else 0.0)
@@ -162,6 +176,9 @@ class EAFController:
         self._last_cum_electric_mwh = cum_electric_mwh
         self._last_cum_oxygen_nm3 = s.cum_oxygen_nm3
         self._last_cum_ng_nm3 = s.cum_ng_nm3
+        self._last_melted_fraction = float(s.melted_fraction)
+        self._last_liquid_steel_kg = float(s.liquid_steel_kg)
+        self._last_can_tap = can_tap_now
         return {
             "step_reward": step_reward,
             "reward_tap_success": reward_tap_success,
@@ -174,6 +191,9 @@ class EAFController:
             "penalty_temperature_violation": penalty_temperature_violation,
             "penalty_invalid_tap": penalty_invalid_tap,
             "penalty_action_smoothness": penalty_action_smoothness,
+            "reward_progress_melt": reward_progress_melt,
+            "reward_progress_liquid": reward_progress_liquid,
+            "reward_reach_can_tap": reward_reach_can_tap,
             "reward_final_phase_bonus": final_phase_bonus,
             "penalty_final_phase_cold_bath": final_phase_penalty,
             "terminal_reward": terminal_reward if done else 0.0,
