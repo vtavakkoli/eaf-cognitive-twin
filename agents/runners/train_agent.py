@@ -29,11 +29,22 @@ def _controller(base_cfg, scenario: str, seed: int) -> EAFController:
     return EAFController(replace(sc[scenario], random_seed=seed), enhanced_model=True)
 
 
+
+
+def _episode_success(obs: dict, cfg) -> bool:
+    return float(obs.get("bath_temp_c", 0.0)) >= float(cfg.steel_melt_temp_c)
+
+
+def _should_early_stop(successes: deque, min_episodes: int = 80) -> bool:
+    if len(successes) < min_episodes:
+        return False
+    return sum(successes) / len(successes) >= 0.92
 def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
     rng = np.random.default_rng(seed)
     policy = QLearningPolicy(epsilon=1.0, seed=seed)
     alpha, gamma = 0.15, 0.99
     logs = []
+    recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         controller = _controller(base_cfg, "base_case", seed + ep)
         obs = controller.reset(); total = 0.0
@@ -49,7 +60,11 @@ def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_s
             obs = res.observation; total += res.reward
             if res.done:
                 break
-        logs.append({"episode": ep, "reward": total, "epsilon": eps})
+        success = int(_episode_success(obs, controller.config))
+        recent_success.append(success)
+        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success})
+        if _should_early_stop(recent_success):
+            break
     output_dir.mkdir(parents=True, exist_ok=True)
     policy.save(output_dir / "q_table.json")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
@@ -64,6 +79,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     lr = 0.02
     eps0 = 1.0
     logs = []
+    recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
@@ -92,7 +108,11 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 target_w = 0.98 * target_w + 0.02 * policy.weights
             if res.done:
                 break
-        logs.append({"episode": ep, "reward": total, "epsilon": eps})
+        success = int(_episode_success(obs, ctrl.config))
+        recent_success.append(success)
+        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success})
+        if _should_early_stop(recent_success):
+            break
     output_dir.mkdir(parents=True, exist_ok=True)
     policy.save(output_dir / "best_policy.npy")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
@@ -109,6 +129,7 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     policy = PPOPolicy()
     best = -1e18
     logs = []
+    recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
@@ -164,7 +185,11 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                     policy.actor_w -= learning_rate * np.outer(grad_logits, x)
                     vpred = float(policy.value_w @ x)
                     policy.value_w -= learning_rate * value_coef * 2.0 * (vpred - ret[j]) * x
-        logs.append({"episode": ep, "reward": total})
+        success = int(_episode_success(obs, ctrl.config))
+        recent_success.append(success)
+        logs.append({"episode": ep, "reward": total, "success": success})
+        if _should_early_stop(recent_success):
+            break
     output_dir.mkdir(parents=True, exist_ok=True)
     if not (output_dir / "best_policy.pt").exists():
         policy.save(output_dir / "best_policy.pt")
