@@ -25,6 +25,9 @@ class EAFController:
         self.state = None
         self.prev_action: ActionDict | None = None
         self.warnings: list[str] = []
+        self._last_cum_electric_mwh = 0.0
+        self._last_cum_oxygen_nm3 = 0.0
+        self._last_cum_ng_nm3 = 0.0
 
     @classmethod
     def from_path(cls, config_path=None, enhanced_model: bool = True) -> "EAFController":
@@ -39,6 +42,9 @@ class EAFController:
         self.state = self.model.initialize_state()
         self.prev_action = active_setpoints(self.config, 0.0) | {"tap_command": False}
         self.warnings = []
+        self._last_cum_electric_mwh = 0.0
+        self._last_cum_oxygen_nm3 = 0.0
+        self._last_cum_ng_nm3 = 0.0
         return self._observation(last_extras={})
 
     def default_schedule_action(self) -> ActionDict:
@@ -105,13 +111,15 @@ class EAFController:
         temp_c = s.steel_temp_k - 273.15
         tap_target = cfg.tap_target_temp_c
         reward_tap_success = 0.0
-        if s.tap_end_time_s is not None:
-            reward_tap_success = 100.0
-        reward_mass_quality = -abs(s.cum_tapped_kg - cfg.tap_target_steel_kg) / 2500.0
-        reward_temp_quality = -abs(temp_c - tap_target) / 18.0
-        penalty_energy = -0.25 * (s.cum_electric_j / 3.6e9)
-        penalty_oxygen = -0.0006 * s.cum_oxygen_nm3
-        penalty_ng = -0.001 * s.cum_ng_nm3
+        reward_mass_quality = 0.0
+        reward_temp_quality = 0.0
+        cum_electric_mwh = s.cum_electric_j / 3.6e9
+        step_electric_mwh = max(0.0, cum_electric_mwh - self._last_cum_electric_mwh)
+        step_oxygen_nm3 = max(0.0, s.cum_oxygen_nm3 - self._last_cum_oxygen_nm3)
+        step_ng_nm3 = max(0.0, s.cum_ng_nm3 - self._last_cum_ng_nm3)
+        penalty_energy = -0.25 * step_electric_mwh
+        penalty_oxygen = -0.0006 * step_oxygen_nm3
+        penalty_ng = -0.001 * step_ng_nm3
         penalty_carbon = -10.0 * abs(s.steel_carbon_wt_pct - 0.05)
         penalty_temperature_violation = -50.0 if bool(safety_flags.get("temperature_violation", False)) else 0.0
         penalty_invalid_tap = -10.0 if bool(safety_flags.get("invalid_tap_command", False)) else 0.0
@@ -126,7 +134,11 @@ class EAFController:
                 # Encourage agents to finish at least above melt temperature even if they miss tap.
                 final_phase_bonus = 25.0
 
-        terminal_reward = 50.0 if s.tap_end_time_s is not None else -20.0 + final_phase_bonus + final_phase_penalty
+        if done and s.tap_end_time_s is not None:
+            reward_tap_success = 300.0
+            reward_mass_quality = -abs(s.cum_tapped_kg - cfg.tap_target_steel_kg) / 900.0
+            reward_temp_quality = -abs(temp_c - tap_target) / 8.0
+        terminal_reward = reward_tap_success + reward_mass_quality + reward_temp_quality if s.tap_end_time_s is not None else max(-300.0, -40.0 + final_phase_bonus + final_phase_penalty)
         step_reward = sum(
             [
                 reward_tap_success,
@@ -141,6 +153,15 @@ class EAFController:
                 penalty_action_smoothness,
             ]
         )
+        raw_reward = step_reward + (terminal_reward if done else 0.0)
+        clip_abs = float(getattr(cfg, "rl_reward_clip_abs", 0.0) or 0.0)
+        if clip_abs > 0.0:
+            raw_reward = float(max(-clip_abs, min(clip_abs, raw_reward)))
+        reward_norm = float(getattr(cfg, "rl_reward_normalize_scale", 1.0) or 1.0)
+        total_reward = raw_reward / max(1e-9, reward_norm)
+        self._last_cum_electric_mwh = cum_electric_mwh
+        self._last_cum_oxygen_nm3 = s.cum_oxygen_nm3
+        self._last_cum_ng_nm3 = s.cum_ng_nm3
         return {
             "step_reward": step_reward,
             "reward_tap_success": reward_tap_success,
@@ -156,6 +177,7 @@ class EAFController:
             "reward_final_phase_bonus": final_phase_bonus,
             "penalty_final_phase_cold_bath": final_phase_penalty,
             "terminal_reward": terminal_reward if done else 0.0,
+            "total_reward": total_reward,
         }
 
     def step(self, action: ActionDict) -> StepResult:
@@ -183,4 +205,4 @@ class EAFController:
         reward_components = self._reward_components(safety_flags, done)
         obs = self._observation({**extras, **reward_components})
         info = {"warnings": list(self.warnings), "safe_action": safe_action, **extras, **safety_flags, "is_downtime": is_down, **reward_components}
-        return StepResult(observation=obs, reward=reward_components["step_reward"] + reward_components["terminal_reward"], done=done, info=info)
+        return StepResult(observation=obs, reward=reward_components["total_reward"], done=done, info=info)
