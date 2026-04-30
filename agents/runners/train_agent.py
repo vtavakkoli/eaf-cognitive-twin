@@ -49,12 +49,25 @@ def _action_index_from_action(obs: dict, action: dict) -> int:
         key=lambda k: abs(safe_discrete_action(k, obs)["power_mw"] - float(action.get("power_mw", 0.0))),
     )
     return ACTION_NAMES.index(best_name)
+def _failure_reason(obs: dict) -> str:
+    if float(obs.get("cum_tapped_kg", 0.0)) <= 1e-6:
+        return "no_tap"
+    if float(obs.get("bath_temp_c", 0.0)) < float(obs.get("_config_obj").steel_melt_temp_c if obs.get("_config_obj") else 0.0):
+        return "cold_bath"
+    if bool(obs.get("bath_temp_c", 0.0) > 1750.0):
+        return "overheat"
+    if bool(obs.get("can_tap", False)) and not bool(obs.get("tapping_started", False)):
+        return "invalid_tap"
+    return "max_steps_reached"
+
+
 def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
     rng = np.random.default_rng(seed)
     policy = QLearningPolicy(epsilon=1.0, seed=seed)
     alpha, gamma = 0.15, 0.99
     logs = []
     recent_success: deque[int] = deque(maxlen=40)
+    best_reward = float("-inf")
     for ep in range(episodes):
         controller = _controller(base_cfg, "base_case", seed + ep)
         obs = controller.reset(); total = 0.0
@@ -65,18 +78,24 @@ def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_s
                 a_name = ACTION_NAMES[int(rng.integers(0, len(ACTION_NAMES)))]
             else:
                 a_name = policy.greedy_action_name(obs)
-            res = controller.step(safe_discrete_action(a_name, obs))
-            policy.update(obs, a_name, res.reward, res.observation, res.done, alpha=alpha, gamma=gamma)
+            action = safe_discrete_action(a_name, obs)
+            res = controller.step(action)
+            executed_name = min(ACTION_NAMES, key=lambda k: abs(safe_discrete_action(k, obs)["power_mw"] - float(res.info["safe_action"]["power_mw"])))
+            policy.update(obs, executed_name, res.reward, res.observation, res.done, alpha=alpha, gamma=gamma)
             obs = res.observation; total += res.reward
             if res.done:
                 break
         success = int(_episode_success(obs, controller.config))
         recent_success.append(success)
-        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success})
+        if total > best_reward:
+            best_reward = total
+            output_dir.mkdir(parents=True, exist_ok=True)
+            policy.save(output_dir / "q_table.json")
+        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success, "tap_success_rate": success, "final_temperature_c": float(obs.get("bath_temp_c", 0.0)), "cum_tapped_kg": float(obs.get("cum_tapped_kg", 0.0)), "energy_per_ton": (float(obs.get("cum_electric_mwh", 0.0)) * 1000.0 / max(1e-9, float(obs.get("cum_tapped_kg", 0.0)) / 1000.0)) if float(obs.get("cum_tapped_kg", 0.0)) > 0 else np.nan, "failure_reason": _failure_reason(obs)})
         if _should_early_stop(recent_success):
             break
     output_dir.mkdir(parents=True, exist_ok=True)
-    policy.save(output_dir / "q_table.json")
+    policy.save(output_dir / "final_policy.json")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
@@ -90,6 +109,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     optimizer = torch.optim.Adam(policy.q_network.parameters(), lr=lr)
     logs = []
     recent_success: deque[int] = deque(maxlen=40)
+    best_reward = float("-inf")
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
@@ -103,7 +123,8 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 a_idx = int(np.argmax(policy.q_values(obs)))
             action = safe_discrete_action(ACTION_NAMES[a_idx], obs)
             res = ctrl.step(action)
-            replay.append((np.asarray(normalized_obs_vec(obs)), a_idx, res.reward, np.asarray(normalized_obs_vec(res.observation)), float(res.done)))
+            executed_idx = _action_index_from_action(obs, res.info["safe_action"])
+            replay.append((np.asarray(normalized_obs_vec(obs)), executed_idx, res.reward, np.asarray(normalized_obs_vec(res.observation)), float(res.done), executed_idx))
             obs = res.observation
             total += res.reward
             if len(replay) >= 64:
@@ -129,11 +150,15 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 break
         success = int(_episode_success(obs, ctrl.config))
         recent_success.append(success)
-        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success})
+        if total > best_reward:
+            best_reward = total
+            output_dir.mkdir(parents=True, exist_ok=True)
+            policy.save(output_dir / "best_policy.pt")
+        logs.append({"episode": ep, "reward": total, "epsilon": eps, "success": success, "tap_success_rate": success, "final_temperature_c": float(obs.get("bath_temp_c", 0.0)), "cum_tapped_kg": float(obs.get("cum_tapped_kg", 0.0)), "energy_per_ton": (float(obs.get("cum_electric_mwh", 0.0)) * 1000.0 / max(1e-9, float(obs.get("cum_tapped_kg", 0.0)) / 1000.0)) if float(obs.get("cum_tapped_kg", 0.0)) > 0 else np.nan, "failure_reason": _failure_reason(obs), "executed_safe_action_idx": executed_idx})
         if _should_early_stop(recent_success):
             break
     output_dir.mkdir(parents=True, exist_ok=True)
-    policy.save(output_dir / "best_policy.pt")
+    policy.save(output_dir / "final_policy.pt")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
@@ -147,6 +172,9 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     rng = np.random.default_rng(seed)
     policy = PPOPolicy()
     best = -1e18
+    reward_ma: deque[float] = deque(maxlen=20)
+    degrade_patience = 12
+    degrade_count = 0
     logs = []
     recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
@@ -154,14 +182,14 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
         obs = ctrl.reset()
         traj = []
         total = 0.0
-        acting_policy = SafePPOAgenticMPCPolicy(policy, horizon=3) if safe_hybrid else policy
+        acting_policy = policy
         for _ in range(max_steps):
             x = np.asarray(normalized_obs_vec(obs))
             p = _softmax(policy.actor_w @ x)
             a = int(rng.choice(len(ACTION_NAMES), p=p))
             old_logp = float(np.log(max(p[a], 1e-12)))
-            action = acting_policy.act(obs) if safe_hybrid else safe_discrete_action(ACTION_NAMES[a], obs)
-            executed_idx = _action_index_from_action(obs, action) if safe_hybrid else a
+            action = safe_discrete_action(ACTION_NAMES[a], obs)
+            executed_idx = a
             res = ctrl.step(action)
             v = float(policy.value_w @ x)
             traj.append((x, executed_idx, old_logp, res.reward, float(res.done), v))
@@ -171,7 +199,6 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 break
         if total > best:
             best = total
-            output_dir.mkdir(parents=True, exist_ok=True)
             policy.save(output_dir / "best_policy.pt")
         # GAE
         adv, ret = [], []
@@ -184,6 +211,9 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
             ret.insert(0, gae + v)
             next_v = v
         adv = np.asarray(adv, dtype=float)
+        ret = np.asarray(ret, dtype=float)
+        if len(ret) > 1:
+            ret = (ret - ret.mean()) / (ret.std() + 1e-8)
         if len(adv) > 1:
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         for _ in range(epochs):
@@ -196,7 +226,10 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                     x, a, old_logp, _, _, _ = traj[j]
                     probs = _softmax(policy.actor_w @ x)
                     logp = float(np.log(max(probs[a], 1e-12)))
-                    ratio = np.exp(logp - old_logp)
+                    ratio = np.exp(np.clip(logp - old_logp, -5.0, 5.0))
+                    approx_kl = old_logp - logp
+                    if approx_kl > 0.03:
+                        continue
                     s1 = ratio * adv[j]
                     s2 = np.clip(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv[j]
                     pg_scale = -min(s1, s2)
@@ -207,12 +240,21 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                     policy.value_w -= learning_rate * value_coef * 2.0 * (vpred - ret[j]) * x
         success = int(_episode_success(obs, ctrl.config))
         recent_success.append(success)
-        logs.append({"episode": ep, "reward": total, "success": success})
+        reward_ma.append(total)
+        moving_avg = float(np.mean(reward_ma))
+        if moving_avg < best - 15.0:
+            degrade_count += 1
+        else:
+            degrade_count = 0
+        logs.append({"episode": ep, "reward": total, "success": success, "tap_success_rate": success, "final_temperature_c": float(obs.get("bath_temp_c", 0.0)), "cum_tapped_kg": float(obs.get("cum_tapped_kg", 0.0)), "energy_per_ton": (float(obs.get("cum_electric_mwh", 0.0)) * 1000.0 / max(1e-9, float(obs.get("cum_tapped_kg", 0.0)) / 1000.0)) if float(obs.get("cum_tapped_kg", 0.0)) > 0 else np.nan, "failure_reason": _failure_reason(obs), "moving_avg_reward": moving_avg})
+        if ep > 30 and degrade_count >= degrade_patience:
+            break
         if _should_early_stop(recent_success):
             break
     output_dir.mkdir(parents=True, exist_ok=True)
     if not (output_dir / "best_policy.pt").exists():
         policy.save(output_dir / "best_policy.pt")
+    policy.save(output_dir / "final_policy.pt")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
@@ -330,7 +372,7 @@ def main() -> None:
     parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "behavior_cloning", "all"], default="heuristic")
     parser.add_argument("--max-steps", type=int, default=610)
     parser.add_argument("--fast-dev-run", action="store_true")
-    parser.add_argument("--learning-rate", type=float, default=0.01)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-epsilon", type=float, default=0.2)
