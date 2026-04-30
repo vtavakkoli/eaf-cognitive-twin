@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn.functional as F
 
 from eaf_twin.config.defaults import scenario_configs
 from eaf_twin.config.loader import load_config
@@ -39,6 +41,14 @@ def _should_early_stop(successes: deque, min_episodes: int = 80) -> bool:
     if len(successes) < min_episodes:
         return False
     return sum(successes) / len(successes) >= 0.92
+
+
+def _action_index_from_action(obs: dict, action: dict) -> int:
+    best_name = min(
+        ACTION_NAMES,
+        key=lambda k: abs(safe_discrete_action(k, obs)["power_mw"] - float(action.get("power_mw", 0.0))),
+    )
+    return ACTION_NAMES.index(best_name)
 def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
     rng = np.random.default_rng(seed)
     policy = QLearningPolicy(epsilon=1.0, seed=seed)
@@ -73,19 +83,20 @@ def train_q_learning(base_cfg, episodes: int, seed: int, output_dir: Path, max_s
 def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
     rng = np.random.default_rng(seed)
     policy = DQNPolicy()
-    target_w = policy.weights.copy()
-    replay: deque = deque(maxlen=4000)
-    gamma = 0.99
-    lr = 0.02
-    eps0 = 1.0
+    target = DQNPolicy()
+    target.q_network.load_state_dict(policy.q_network.state_dict())
+    replay: deque = deque(maxlen=50000)
+    gamma, lr = 0.99, 0.0005
+    optimizer = torch.optim.Adam(policy.q_network.parameters(), lr=lr)
     logs = []
     recent_success: deque[int] = deque(maxlen=40)
     for ep in range(episodes):
         ctrl = _controller(base_cfg, "base_case", seed + ep)
         obs = ctrl.reset()
         total = 0.0
-        eps = max(0.05, eps0 * (0.995**ep))
+        global_step = ep * max_steps
         for step in range(max_steps):
+            eps = max(0.05, 1.0 - (global_step + step) / 10000.0 * (1.0 - 0.05))
             if rng.random() < eps:
                 a_idx = int(rng.integers(0, len(ACTION_NAMES)))
             else:
@@ -95,17 +106,25 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
             replay.append((np.asarray(normalized_obs_vec(obs)), a_idx, res.reward, np.asarray(normalized_obs_vec(res.observation)), float(res.done)))
             obs = res.observation
             total += res.reward
-            if len(replay) >= 32:
-                idx = rng.choice(len(replay), size=32, replace=False)
+            if len(replay) >= 64:
+                idx = rng.choice(len(replay), size=64, replace=False)
                 batch = [replay[i] for i in idx]
-                for x, a, r, nx, done in batch:
-                    next_online = policy.weights @ nx
-                    next_a = int(np.argmax(next_online))
-                    target = r + (1.0 - done) * gamma * float(target_w[next_a] @ nx)
-                    pred = float(policy.weights[a] @ x)
-                    policy.weights[a] += lr * (target - pred) * x
-            if step % 25 == 0:
-                target_w = 0.98 * target_w + 0.02 * policy.weights
+                x = torch.tensor(np.stack([b[0] for b in batch]), dtype=torch.float32)
+                a = torch.tensor([b[1] for b in batch], dtype=torch.int64)
+                r = torch.tensor([b[2] for b in batch], dtype=torch.float32)
+                nx = torch.tensor(np.stack([b[3] for b in batch]), dtype=torch.float32)
+                done = torch.tensor([b[4] for b in batch], dtype=torch.float32)
+                q = policy.q_network(x).gather(1, a.unsqueeze(1)).squeeze(1)
+                with torch.no_grad():
+                    next_a = policy.q_network(nx).argmax(dim=1)
+                    next_q = target.q_network(nx).gather(1, next_a.unsqueeze(1)).squeeze(1)
+                    y = r + (1.0 - done) * gamma * next_q
+                loss = F.smooth_l1_loss(q, y)
+                optimizer.zero_grad(); loss.backward()
+                torch.nn.utils.clip_grad_norm_(policy.q_network.parameters(), 1.0)
+                optimizer.step()
+            if (global_step + step) % 500 == 0:
+                target.q_network.load_state_dict(policy.q_network.state_dict())
             if res.done:
                 break
         success = int(_episode_success(obs, ctrl.config))
@@ -114,7 +133,7 @@ def train_dqn(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
         if _should_early_stop(recent_success):
             break
     output_dir.mkdir(parents=True, exist_ok=True)
-    policy.save(output_dir / "best_policy.npy")
+    policy.save(output_dir / "best_policy.pt")
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
@@ -124,7 +143,7 @@ def _softmax(z: np.ndarray) -> np.ndarray:
     return e / np.maximum(np.sum(e), 1e-12)
 
 
-def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int, safe_hybrid: bool = False, learning_rate: float = 0.01, gamma: float = 0.99, gae_lambda: float = 0.95, clip_epsilon: float = 0.2, entropy_coef: float = 0.01, value_coef: float = 0.5, rollout_steps: int = 128, epochs: int = 4, batch_size: int = 32) -> None:
+def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int, safe_hybrid: bool = False, learning_rate: float = 0.0003, gamma: float = 0.99, gae_lambda: float = 0.95, clip_epsilon: float = 0.1, entropy_coef: float = 0.02, value_coef: float = 0.5, rollout_steps: int = 128, epochs: int = 4, batch_size: int = 32) -> None:
     rng = np.random.default_rng(seed)
     policy = PPOPolicy()
     best = -1e18
@@ -142,9 +161,10 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
             a = int(rng.choice(len(ACTION_NAMES), p=p))
             old_logp = float(np.log(max(p[a], 1e-12)))
             action = acting_policy.act(obs) if safe_hybrid else safe_discrete_action(ACTION_NAMES[a], obs)
+            executed_idx = _action_index_from_action(obs, action) if safe_hybrid else a
             res = ctrl.step(action)
             v = float(policy.value_w @ x)
-            traj.append((x, a, old_logp, res.reward, float(res.done), v))
+            traj.append((x, executed_idx, old_logp, res.reward, float(res.done), v))
             obs = res.observation
             total += res.reward
             if res.done or len(traj) >= rollout_steps:
@@ -269,7 +289,7 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
         )
 
     rows = []
-    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.npy", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_policy.pt"}
+    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_policy.pt"}
     chart_blocks: list[str] = []
     for m, f in expected.items():
         p = base_dir / m / f
@@ -280,10 +300,14 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
             if "reward" in df.columns and not df.empty:
                 reward_final = round(float(df["reward"].iloc[-1]), 6)
                 reward_best = round(float(df["reward"].max()), 6)
+                df["reward_ma20"] = df["reward"].rolling(20, min_periods=1).mean()
                 reward_chart = _svg_line_plot(df, "reward", f"{m}: reward vs episode", "#1f77b4")
+                reward_ma_chart = _svg_line_plot(df, "reward_ma20", f"{m}: moving avg reward", "#ff7f0e")
                 success_chart = _svg_line_plot(df, "success", f"{m}: success vs episode", "#2ca02c")
-                chart_blocks.append(f"<section><h3>{m}</h3>{reward_chart}{success_chart}</section>")
-        rows.append({"model": m, "trained": m in trained, "checkpoint": str(p), "checkpoint_exists": p.exists(), "best_reward": reward_best, "final_reward": reward_final})
+                chart_blocks.append(f"<section><h3>{m}</h3>{reward_chart}{reward_ma_chart}{success_chart}</section>")
+        reward_drop = "n/a" if reward_final == "n/a" else round(float(reward_best) - float(reward_final), 6)
+        warn = False if reward_final == "n/a" else (float(reward_final) < 0.95 * float(reward_best))
+        rows.append({"model": m, "trained": m in trained, "checkpoint": str(p), "checkpoint_exists": p.exists(), "best_episode": int(df['episode'][df['reward'].idxmax()]) if curve.exists() and not df.empty and 'reward' in df.columns else "n/a", "final_episode": int(df['episode'].iloc[-1]) if curve.exists() and not df.empty else "n/a", "best_reward": reward_best, "final_reward": reward_final, "reward_drop": reward_drop, "warning_final_below_5pct": warn})
     sdf = pd.DataFrame(rows)
     sdf.to_csv(base_dir / "training_summary.csv", index=False)
     html = (
