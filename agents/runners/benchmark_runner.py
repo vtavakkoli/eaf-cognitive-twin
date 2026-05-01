@@ -39,7 +39,7 @@ def run_benchmark(
                 outcome.episode_df.to_csv(ts_path, index=False)
                 last = outcome.episode_df.iloc[-1]
                 tap_reason = str(last.get("tap_reason", "not_ready"))
-                tapped_kg = float(last["cum_tapped_kg"])
+                tapped_kg = float(last.get("liquid_steel_kg", 0.0))
                 target = float(controller.config.tap_target_steel_kg)
                 tapped_tons = tapped_kg / 1000.0
                 energy_per_ton = float(last["cum_electric_mwh"]) / tapped_tons
