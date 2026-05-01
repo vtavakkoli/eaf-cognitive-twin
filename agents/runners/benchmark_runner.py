@@ -42,9 +42,14 @@ def run_benchmark(
                 tapped_kg = float(last.get("liquid_steel_kg", 0.0))
                 target = float(controller.config.tap_target_steel_kg)
                 tapped_tons = tapped_kg / 1000.0
-                energy_per_ton = float(last["cum_electric_mwh"]) / tapped_tons
-                oxygen_per_ton = float(last["cum_oxygen_nm3"]) / tapped_tons
-                ng_per_ton = float(last["cum_ng_nm3"]) / tapped_tons
+                if tapped_tons > 0.0:
+                    energy_per_ton = float(last["cum_electric_mwh"]) / tapped_tons
+                    oxygen_per_ton = float(last["cum_oxygen_nm3"]) / tapped_tons
+                    ng_per_ton = float(last["cum_ng_nm3"]) / tapped_tons
+                else:
+                    energy_per_ton = float("nan")
+                    oxygen_per_ton = float("nan")
+                    ng_per_ton = float("nan")
                 temp_err = abs(float(last["bath_temp_c"]) - float(controller.config.tap_target_temp_c))
                 mass_err = abs(tapped_kg - target)
                 carbon_err = abs(float(last["steel_carbon_wt_pct"]) - 0.05)
