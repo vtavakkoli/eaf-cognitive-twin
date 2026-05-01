@@ -367,7 +367,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             "dqn": (args.training_dir / "dqn" / "best_policy.npy", DQNPolicy.load),
             "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
             "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
-            "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
+            "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
         }
         for name, (path, loader) in ckpts.items():
             if path.exists():

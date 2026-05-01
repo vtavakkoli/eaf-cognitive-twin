@@ -168,7 +168,7 @@ def _softmax(z: np.ndarray) -> np.ndarray:
     return e / np.maximum(np.sum(e), 1e-12)
 
 
-def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int, safe_hybrid: bool = False, learning_rate: float = 0.0003, gamma: float = 0.99, gae_lambda: float = 0.95, clip_epsilon: float = 0.1, entropy_coef: float = 0.02, value_coef: float = 0.5, rollout_steps: int = 128, epochs: int = 4, batch_size: int = 32) -> None:
+def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int, safe_hybrid: bool = False, learning_rate: float = 0.0001, gamma: float = 0.99, gae_lambda: float = 0.95, clip_epsilon: float = 0.15, entropy_coef: float = 0.02, value_coef: float = 0.5, rollout_steps: int = 128, epochs: int = 4, batch_size: int = 32) -> None:
     rng = np.random.default_rng(seed)
     policy = PPOPolicy()
     best = -1e18
@@ -182,7 +182,7 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
         obs = ctrl.reset()
         traj = []
         total = 0.0
-        acting_policy = policy
+        entropy_coef_ep = max(0.001, entropy_coef * (0.995 ** ep))
         for _ in range(max_steps):
             x = np.asarray(normalized_obs_vec(obs))
             p = _softmax(policy.actor_w @ x)
@@ -192,14 +192,15 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
             executed_idx = a
             res = ctrl.step(action)
             v = float(policy.value_w @ x)
-            traj.append((x, executed_idx, old_logp, res.reward, float(res.done), v))
+            traj.append((x, executed_idx, old_logp, float(np.clip(res.reward, -5.0, 5.0)), float(res.done), v))
             obs = res.observation
             total += res.reward
             if res.done or len(traj) >= rollout_steps:
                 break
         if total > best:
             best = total
-            policy.save(output_dir / "best_policy.pt")
+            ckpt_name = "best_safe_ppo_policy.pt" if safe_hybrid else "best_policy.pt"
+            policy.save(output_dir / ckpt_name)
         # GAE
         adv, ret = [], []
         gae = 0.0
@@ -216,10 +217,12 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
             ret = (ret - ret.mean()) / (ret.std() + 1e-8)
         if len(adv) > 1:
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+        stop_for_kl = False
         for _ in range(epochs):
             if not traj:
                 break
             idx = rng.permutation(len(traj))
+            kl_values = []
             for start in range(0, len(idx), batch_size):
                 bi = idx[start : start + batch_size]
                 for j in bi:
@@ -228,16 +231,22 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                     logp = float(np.log(max(probs[a], 1e-12)))
                     ratio = np.exp(np.clip(logp - old_logp, -5.0, 5.0))
                     approx_kl = old_logp - logp
-                    if approx_kl > 0.03:
-                        continue
+                    kl_values.append(float(max(0.0, approx_kl)))
                     s1 = ratio * adv[j]
                     s2 = np.clip(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv[j]
                     pg_scale = -min(s1, s2)
                     onehot = np.zeros(len(ACTION_NAMES)); onehot[a] = 1.0
-                    grad_logits = (probs - onehot) * pg_scale - entropy_coef * (-np.log(np.maximum(probs, 1e-12)) - 1.0)
+                    grad_logits = (probs - onehot) * pg_scale - entropy_coef_ep * (-np.log(np.maximum(probs, 1e-12)) - 1.0)
                     policy.actor_w -= learning_rate * np.outer(grad_logits, x)
                     vpred = float(policy.value_w @ x)
                     policy.value_w -= learning_rate * value_coef * 2.0 * (vpred - ret[j]) * x
+                    policy.actor_w = np.clip(policy.actor_w, -10.0, 10.0)
+                    policy.value_w = np.clip(policy.value_w, -10.0, 10.0)
+            if kl_values and float(np.mean(kl_values)) > 0.02:
+                stop_for_kl = True
+                break
+        if stop_for_kl:
+            pass
         success = int(_episode_success(obs, ctrl.config))
         recent_success.append(success)
         reward_ma.append(total)
@@ -252,9 +261,10 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
         if _should_early_stop(recent_success):
             break
     output_dir.mkdir(parents=True, exist_ok=True)
-    if not (output_dir / "best_policy.pt").exists():
-        policy.save(output_dir / "best_policy.pt")
-    policy.save(output_dir / "final_policy.pt")
+    ckpt_name = "best_safe_ppo_policy.pt" if safe_hybrid else "best_policy.pt"
+    if not (output_dir / ckpt_name).exists():
+        policy.save(output_dir / ckpt_name)
+    # Save only the best checkpoint to avoid selecting a degraded final model.
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
@@ -331,7 +341,7 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
         )
 
     rows = []
-    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_policy.pt"}
+    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_safe_ppo_policy.pt"}
     chart_blocks: list[str] = []
     for m, f in expected.items():
         p = base_dir / m / f
@@ -372,10 +382,10 @@ def main() -> None:
     parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "behavior_cloning", "all"], default="heuristic")
     parser.add_argument("--max-steps", type=int, default=610)
     parser.add_argument("--fast-dev-run", action="store_true")
-    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
-    parser.add_argument("--clip-epsilon", type=float, default=0.2)
+    parser.add_argument("--clip-epsilon", type=float, default=0.15)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--value-coef", type=float, default=0.5)
     parser.add_argument("--rollout-steps", type=int, default=610)

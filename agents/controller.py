@@ -134,6 +134,8 @@ class EAFController:
         reward_progress_liquid = max(0.0, float(s.liquid_steel_kg) - self._last_liquid_steel_kg) / 80.0
         can_tap_now = bool(self._can_tap())
         reward_reach_can_tap = 20.0 if can_tap_now and not self._last_can_tap else 0.0
+        reward_hot_ready = 8.0 if temp_c >= cfg.steel_melt_temp_c else 0.0
+        penalty_ready_delay = -2.0 if can_tap_now and s.tap_end_time_s is None else 0.0
         final_phase_bonus = 0.0
         final_phase_penalty = 0.0
         if done and s.tap_end_time_s is None:
@@ -149,6 +151,12 @@ class EAFController:
             reward_tap_success = 420.0
             reward_mass_quality = -abs(s.cum_tapped_kg - cfg.tap_target_steel_kg) / 900.0
             reward_temp_quality = -abs(temp_c - tap_target) / 8.0
+            tapped_tons = max(1e-9, s.cum_tapped_kg / 1000.0)
+            energy_per_ton = cum_electric_mwh / tapped_tons
+            oxygen_per_ton = s.cum_oxygen_nm3 / tapped_tons
+            ng_per_ton = s.cum_ng_nm3 / tapped_tons
+            reward_efficiency = 120.0 - 0.04 * energy_per_ton - 0.002 * oxygen_per_ton - 0.003 * ng_per_ton
+            reward_tap_success += max(-120.0, reward_efficiency)
         terminal_reward = reward_tap_success + reward_mass_quality + reward_temp_quality if s.tap_end_time_s is not None else max(-300.0, -40.0 + final_phase_bonus + final_phase_penalty)
         step_reward = sum(
             [
@@ -165,6 +173,8 @@ class EAFController:
                 reward_progress_melt,
                 reward_progress_liquid,
                 reward_reach_can_tap,
+                reward_hot_ready,
+                penalty_ready_delay,
             ]
         )
         raw_reward = step_reward + (terminal_reward if done else 0.0)
@@ -194,6 +204,8 @@ class EAFController:
             "reward_progress_melt": reward_progress_melt,
             "reward_progress_liquid": reward_progress_liquid,
             "reward_reach_can_tap": reward_reach_can_tap,
+            "reward_hot_ready": reward_hot_ready,
+            "penalty_ready_delay": penalty_ready_delay,
             "reward_final_phase_bonus": final_phase_bonus,
             "penalty_final_phase_cold_bath": final_phase_penalty,
             "terminal_reward": terminal_reward if done else 0.0,
