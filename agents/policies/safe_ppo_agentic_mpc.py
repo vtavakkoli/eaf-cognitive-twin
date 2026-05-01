@@ -77,6 +77,10 @@ class SafePPOAgenticMPCPolicy(BasePolicy):
             selected["tap_command"] = True
             strategy = "safe_tap"
             reason = "tap_window_ready"
+        if can_tap and float(observation.get("bath_temp_c", 0.0)) >= float(observation.get("_config_obj").steel_melt_temp_c if observation.get("_config_obj") else 1600.0):
+            selected["tap_command"] = True
+            strategy = "safe_tap"
+            reason = "physically_valid_tap"
 
         best_reward = self._predict_reward(observation, selected)
         best = dict(selected)
@@ -89,6 +93,16 @@ class SafePPOAgenticMPCPolicy(BasePolicy):
                 best = cand
                 strategy = "mpc_correction"
                 reason = "local_model_rollout"
+        bath_temp_c = float(observation.get("bath_temp_c", 0.0))
+        max_temp_c = float(observation.get("_config_obj").max_temp_c if observation.get("_config_obj") else 1700.0)
+        if bath_temp_c >= max_temp_c - 10.0:
+            best["power_mw"] = min(best.get("power_mw", 0.0), 15.0)
+            best["oxygen_nm3_min"] = min(best.get("oxygen_nm3_min", 0.0), 10.0)
+            best["ng_nm3_min"] = min(best.get("ng_nm3_min", 0.0), 4.0)
+            strategy = "safety_correction"
+            reason = "prevent_overheating"
+        if can_tap and bool(best.get("tap_command", False)):
+            best.update({"power_mw": 0.0, "oxygen_nm3_min": 0.0, "ng_nm3_min": 0.0})
 
         if bool(observation.get("is_downtime", False)):
             best.update({"power_mw": 0.0, "oxygen_nm3_min": 0.0, "ng_nm3_min": 0.0, "carbon_kg_min": 0.0, "flux_kg_min": 0.0, "tap_command": False})
