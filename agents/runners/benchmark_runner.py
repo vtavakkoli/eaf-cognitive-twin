@@ -41,15 +41,10 @@ def run_benchmark(
                 tap_reason = str(last.get("tap_reason", "not_ready"))
                 tapped_kg = float(last["cum_tapped_kg"])
                 target = float(controller.config.tap_target_steel_kg)
-                if tapped_kg <= 0.0:
-                    energy_per_ton = float("nan")
-                    oxygen_per_ton = float("nan")
-                    ng_per_ton = float("nan")
-                else:
-                    tapped_tons = tapped_kg / 1000.0
-                    energy_per_ton = float(last["cum_electric_mwh"]) / tapped_tons
-                    oxygen_per_ton = float(last["cum_oxygen_nm3"]) / tapped_tons
-                    ng_per_ton = float(last["cum_ng_nm3"]) / tapped_tons
+                tapped_tons = tapped_kg / 1000.0
+                energy_per_ton = float(last["cum_electric_mwh"]) / tapped_tons
+                oxygen_per_ton = float(last["cum_oxygen_nm3"]) / tapped_tons
+                ng_per_ton = float(last["cum_ng_nm3"]) / tapped_tons
                 temp_err = abs(float(last["bath_temp_c"]) - float(controller.config.tap_target_temp_c))
                 mass_err = abs(tapped_kg - target)
                 carbon_err = abs(float(last["steel_carbon_wt_pct"]) - 0.05)
@@ -63,7 +58,7 @@ def run_benchmark(
                 can_tap_ever_true = bool(outcome.episode_df.get("can_tap", pd.Series(dtype=bool)).fillna(False).astype(bool).any())
                 can_tap_final = bool(last.get("can_tap", False))
                 final_liquid_steel_kg = float(last.get("liquid_steel_kg", 0.0))
-                tappable_molten_kg = final_liquid_steel_kg if can_tap_final else 0.0
+                tappable_molten_kg = final_liquid_steel_kg
                 tap_command_ever_true = bool(outcome.episode_df.get("tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).any())
                 tap_blocked_by_safety_filter_count = int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
                 termination_reason = str(last.get("termination_reason", "tapped" if tapped_kg > 0.0 else "heat_end_without_tap"))
