@@ -20,6 +20,8 @@ from agents.policies.q_learning_policy import QLearningPolicy
 from agents.policies.rule_based import RuleBasedPolicy
 from agents.policies.sac_inspired_policy import SACInspiredPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
+from agents.policies.safe_ppo_agentic_sac import SafePPOAgenticSACPolicy
+from agents.policies.safe_ppo_agentic_td3 import SafePPOAgenticTD3Policy
 from agents.policies.td3_inspired_policy import TD3InspiredPolicy
 from agents.policies.trainable_policy import TrainablePolicy
 from agents.runners.benchmark_runner import run_benchmark
@@ -33,6 +35,8 @@ POLICY_LABELS = {
     "dqn": "DQN",
     "ppo": "PPO",
     "safe_ppo_agentic_mpc": "Proposed Safe PPO-Agentic MPC",
+    "safe_ppo_agentic_sac": "Proposed Safe PPO-Agentic SAC",
+    "safe_ppo_agentic_td3": "Proposed Safe PPO-Agentic TD3",
     "behavior_cloning": "Behavior Cloning",
     "sac_inspired": "SAC-Inspired",
     "td3_inspired": "TD3-Inspired",
@@ -367,7 +371,9 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             "dqn": (args.training_dir / "dqn" / "best_policy.npy", DQNPolicy.load),
             "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
             "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
-            "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
+            "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_agentic_mpc_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
+            "safe_ppo_agentic_sac": (args.training_dir / "safe_ppo_agentic_sac" / "best_safe_ppo_agentic_sac_policy.pt", SafePPOAgenticSACPolicy.load),
+            "safe_ppo_agentic_td3": (args.training_dir / "safe_ppo_agentic_td3" / "best_safe_ppo_agentic_td3_policy.pt", SafePPOAgenticTD3Policy.load),
         }
         for name, (path, loader) in ckpts.items():
             if path.exists():
