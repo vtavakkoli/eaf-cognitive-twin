@@ -168,7 +168,7 @@ def _softmax(z: np.ndarray) -> np.ndarray:
     return e / np.maximum(np.sum(e), 1e-12)
 
 
-def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int, safe_hybrid: bool = False, learning_rate: float = 0.0001, gamma: float = 0.99, gae_lambda: float = 0.95, clip_epsilon: float = 0.15, entropy_coef: float = 0.02, value_coef: float = 0.5, rollout_steps: int = 128, epochs: int = 4, batch_size: int = 32) -> None:
+def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int, safe_hybrid: bool = False, hybrid_name: str = "safe_ppo_agentic_mpc", learning_rate: float = 0.0001, gamma: float = 0.99, gae_lambda: float = 0.95, clip_epsilon: float = 0.15, entropy_coef: float = 0.02, value_coef: float = 0.5, rollout_steps: int = 128, epochs: int = 4, batch_size: int = 32) -> None:
     rng = np.random.default_rng(seed)
     policy = PPOPolicy()
     best = -1e18
@@ -199,7 +199,7 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
                 break
         if total > best:
             best = total
-            ckpt_name = "best_safe_ppo_policy.pt" if safe_hybrid else "best_policy.pt"
+            ckpt_name = f"best_{hybrid_name}_policy.pt" if safe_hybrid else "best_policy.pt"
             policy.save(output_dir / ckpt_name)
         # GAE
         adv, ret = [], []
@@ -261,7 +261,7 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
         if _should_early_stop(recent_success):
             break
     output_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_name = "best_safe_ppo_policy.pt" if safe_hybrid else "best_policy.pt"
+    ckpt_name = f"best_{hybrid_name}_policy.pt" if safe_hybrid else "best_policy.pt"
     if not (output_dir / ckpt_name).exists():
         policy.save(output_dir / ckpt_name)
     # Save only the best checkpoint to avoid selecting a degraded final model.
@@ -341,7 +341,7 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
         )
 
     rows = []
-    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_safe_ppo_policy.pt"}
+    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_safe_ppo_agentic_mpc_policy.pt", "safe_ppo_agentic_sac": "best_safe_ppo_agentic_sac_policy.pt", "safe_ppo_agentic_td3": "best_safe_ppo_agentic_td3_policy.pt"}
     chart_blocks: list[str] = []
     for m, f in expected.items():
         p = base_dir / m / f
@@ -379,7 +379,7 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "behavior_cloning", "all"], default="heuristic")
+    parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "safe_ppo_agentic_sac", "safe_ppo_agentic_td3", "behavior_cloning", "all"], default="heuristic")
     parser.add_argument("--max-steps", type=int, default=610)
     parser.add_argument("--fast-dev-run", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -401,9 +401,11 @@ def main() -> None:
         "q_learning": lambda: train_q_learning(base_cfg, episodes, args.seed, args.output_dir / "q_learning", args.max_steps),
         "dqn": lambda: train_dqn(base_cfg, episodes, args.seed, args.output_dir / "dqn", args.max_steps),
         "ppo": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "ppo", args.max_steps, safe_hybrid=False, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
-        "safe_ppo_agentic_mpc": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_mpc", args.max_steps, safe_hybrid=True, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
+        "safe_ppo_agentic_mpc": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_mpc", args.max_steps, safe_hybrid=True, hybrid_name="safe_ppo_agentic_mpc", learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
+        "safe_ppo_agentic_sac": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_sac", args.max_steps, safe_hybrid=True, hybrid_name="safe_ppo_agentic_sac", learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
+        "safe_ppo_agentic_td3": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_td3", args.max_steps, safe_hybrid=True, hybrid_name="safe_ppo_agentic_td3", learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
     }
-    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","safe_ppo_agentic_mpc"]
+    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","safe_ppo_agentic_mpc","safe_ppo_agentic_sac","safe_ppo_agentic_td3"]
     if args.algorithm == "heuristic":
         train_map["trainable_adaptive_controller"](); trained=["trainable_adaptive_controller"]
     elif args.algorithm == "all":

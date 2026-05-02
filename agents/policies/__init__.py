@@ -9,6 +9,8 @@ from agents.policies.ppo_policy import PPOPolicy
 from agents.policies.q_learning_policy import QLearningPolicy
 from agents.policies.rule_based import RuleBasedPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
+from agents.policies.safe_ppo_agentic_sac import SafePPOAgenticSACPolicy
+from agents.policies.safe_ppo_agentic_td3 import SafePPOAgenticTD3Policy
 from agents.policies.sac_inspired_policy import SACInspiredPolicy
 from agents.policies.td3_inspired_policy import TD3InspiredPolicy
 from agents.policies.trainable_policy import TrainablePolicy
@@ -26,6 +28,8 @@ __all__ = [
     "DQNPolicy",
     "PPOPolicy",
     "SafePPOAgenticMPCPolicy",
+    "SafePPOAgenticSACPolicy",
+    "SafePPOAgenticTD3Policy",
     "BehaviorCloningPolicy",
     "SACInspiredPolicy",
     "TD3InspiredPolicy",
