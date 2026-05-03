@@ -66,23 +66,27 @@ def _ci95(series: pd.Series) -> float:
 
 
 def _normalized_score(df: pd.DataFrame) -> pd.Series:
-    # balanced multi-objective score used for model selection
-    w_reward, w_success, w_energy, w_safety, w_robustness = 0.45, 0.25, 0.15, 0.10, 0.05
     energy = pd.to_numeric(df["energy_per_ton"], errors="coerce")
     energy_filled = energy.fillna(energy.max(skipna=True) if energy.notna().any() else 0.0)
-    reward_norm = (df["total_reward"] - df["total_reward"].min()) / max(df["total_reward"].max() - df["total_reward"].min(), 1e-9)
-    success_norm = df["tap_success"].astype(float)
-    energy_norm = 1.0 - (energy_filled - energy_filled.min()) / max(energy_filled.max() - energy_filled.min(), 1e-9)
+    target_tapped_kg = pd.to_numeric(df["target_tapped_kg"], errors="coerce").replace(0, np.nan)
+    production_norm = (pd.to_numeric(df["tapped_kg"], errors="coerce") / target_tapped_kg).clip(lower=0.0, upper=1.0).fillna(0.0)
+    production_eff = (pd.to_numeric(df["tapped_kg"], errors="coerce") / energy_filled.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    production_eff_filled = production_eff.fillna(production_eff.min(skipna=True) if production_eff.notna().any() else 0.0)
+    production_efficiency_norm = (production_eff_filled - production_eff_filled.min()) / max(production_eff_filled.max() - production_eff_filled.min(), 1e-9)
+    energy_per_ton_norm = 1.0 - (energy_filled - energy_filled.min()) / max(energy_filled.max() - energy_filled.min(), 1e-9)
+    temp_norm = 1.0 - (df["tap_temperature_error"] - df["tap_temperature_error"].min()) / max(df["tap_temperature_error"].max() - df["tap_temperature_error"].min(), 1e-9)
+    carbon_norm = 1.0 - (df["carbon_error"] - df["carbon_error"].min()) / max(df["carbon_error"].max() - df["carbon_error"].min(), 1e-9)
+    quality_norm = 0.5 * temp_norm + 0.5 * carbon_norm
     safety_norm = 1.0 - (df["constraint_violation_rate"] - df["constraint_violation_rate"].min()) / max(df["constraint_violation_rate"].max() - df["constraint_violation_rate"].min(), 1e-9)
-    robustness_norm = 1.0 - (df["tap_temperature_error"] - df["tap_temperature_error"].min()) / max(df["tap_temperature_error"].max() - df["tap_temperature_error"].min(), 1e-9)
-    out = (
-        w_reward * reward_norm
-        + w_success * success_norm
-        + w_energy * energy_norm
-        + w_safety * safety_norm
-        + w_robustness * robustness_norm
+    tap_ready_norm = df["tap_ready"].astype(float)
+    return (
+        0.25 * tap_ready_norm
+        + 0.20 * production_norm
+        + 0.20 * production_efficiency_norm
+        + 0.15 * energy_per_ton_norm
+        + 0.10 * quality_norm
+        + 0.10 * safety_norm
     )
-    return out
 
 
 def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
@@ -91,9 +95,10 @@ def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
         std_reward=("total_reward", "std"),
         median_reward=("total_reward", "median"),
         reward_ci95=("total_reward", _ci95),
-        success_rate=("tap_success", "mean"),
-        success_std=("tap_success", "std"),
-        mean_tapped_kg=("tappable_molten_kg", "mean"),
+        tap_ready_rate=("tap_ready", "mean"),
+        tap_ready_std=("tap_ready", "std"),
+        mean_tapped_kg=("tapped_kg", "mean"),
+        mean_target_tapped_kg=("target_tapped_kg", "mean"),
         mean_electric_mwh=("cum_electric_mwh", "mean"),
         mean_oxygen_nm3=("cum_oxygen_nm3", "mean"),
         mean_ng_nm3=("cum_ng_nm3", "mean"),
@@ -110,12 +115,19 @@ def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
         invalid_tap_count=("invalid_tap_count", "sum"),
         action_clamp_count=("action_clamp_count", "sum"),
     )
-    agg["normalized_score"] = _normalized_score(agg.rename(columns={"mean_reward": "total_reward", "success_rate": "tap_success"}))
-    agg["reward_norm"] = (agg["mean_reward"] - agg["mean_reward"].min()) / max(agg["mean_reward"].max() - agg["mean_reward"].min(), 1e-9)
-    agg["tap_success_norm"] = agg["success_rate"].astype(float)
-    agg["energy_efficiency_norm"] = 1.0 - (agg["energy_per_ton"] - agg["energy_per_ton"].min()) / max(agg["energy_per_ton"].max() - agg["energy_per_ton"].min(), 1e-9)
+    agg["tapped_kg"] = agg["mean_tapped_kg"]
+    agg["target_tapped_kg"] = agg["mean_target_tapped_kg"]
+    agg["tap_ready"] = agg["tap_ready_rate"] >= 0.5
+    agg["normalized_score"] = _normalized_score(agg)
+    agg["production_norm"] = (agg["mean_tapped_kg"] / agg["mean_target_tapped_kg"].replace(0, np.nan)).clip(lower=0.0, upper=1.0).fillna(0.0)
+    agg["tap_ready_norm"] = agg["tap_ready_rate"].astype(float)
+    production_eff = (agg["mean_tapped_kg"] / agg["energy_per_ton"].replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    agg["production_efficiency_norm"] = (production_eff - production_eff.min()) / max(production_eff.max() - production_eff.min(), 1e-9)
+    agg["energy_per_ton_norm"] = 1.0 - (agg["energy_per_ton"] - agg["energy_per_ton"].min()) / max(agg["energy_per_ton"].max() - agg["energy_per_ton"].min(), 1e-9)
     agg["safety_norm"] = 1.0 - (agg["constraint_violation_rate"] - agg["constraint_violation_rate"].min()) / max(agg["constraint_violation_rate"].max() - agg["constraint_violation_rate"].min(), 1e-9)
-    agg["scenario_robustness_norm"] = 1.0 - (agg["tap_temperature_error"] - agg["tap_temperature_error"].min()) / max(agg["tap_temperature_error"].max() - agg["tap_temperature_error"].min(), 1e-9)
+    temp_norm = 1.0 - (agg["tap_temperature_error"] - agg["tap_temperature_error"].min()) / max(agg["tap_temperature_error"].max() - agg["tap_temperature_error"].min(), 1e-9)
+    carbon_norm = 1.0 - (agg["carbon_error"] - agg["carbon_error"].min()) / max(agg["carbon_error"].max() - agg["carbon_error"].min(), 1e-9)
+    agg["quality_norm"] = 0.5 * temp_norm + 0.5 * carbon_norm
     return agg.sort_values("normalized_score", ascending=False)
 
 
@@ -165,12 +177,12 @@ def _build_policy_coverage(summary_df: pd.DataFrame, evaluated_policies: list[st
         episodes=("policy", "size"),
         scenarios=("scenario", "nunique"),
         seeds=("seed", "nunique"),
-        tap_success_rate=("tap_success", "mean"),
+        tap_ready_rate=("tap_ready", "mean"),
     )
     coverage = pd.DataFrame({"policy": evaluated_policies}).merge(grouped, on="policy", how="left")
     for col in ["episodes", "scenarios", "seeds"]:
         coverage[col] = coverage[col].fillna(0).astype(int)
-    coverage["tap_success_rate"] = pd.to_numeric(coverage["tap_success_rate"], errors="coerce")
+    coverage["tap_ready_rate"] = pd.to_numeric(coverage["tap_ready_rate"], errors="coerce")
     coverage["display_name"] = coverage["policy"].map(_display_name)
     coverage["included_in_all_outputs"] = True
     return coverage.sort_values("policy")
@@ -183,7 +195,7 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
     policy = summary_df.groupby("policy", as_index=False).agg(
         mean_reward=("total_reward", "mean"),
         std_reward=("total_reward", "std"),
-        tap_success_rate=("tap_success", "mean"),
+        tap_ready_rate=("tap_ready", "mean"),
         energy_per_ton=("energy_per_ton", "mean"),
         violation_count=("temperature_violation_count", "sum"),
         normalized_score=("normalized_score", "mean"),
@@ -193,7 +205,7 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
 
     for col, fn, title in [
         ("mean_reward", "reward_mean_std.png", "Reward mean by policy"),
-        ("tap_success_rate", "tap_success_rate.png", "Tap success rate by policy"),
+        ("tap_ready_rate", "tap_ready_rate.png", "Tap ready rate by policy"),
         ("energy_per_ton", "energy_per_ton.png", "Energy per ton by policy"),
         ("violation_count", "violation_count.png", "Violation count by policy"),
         ("normalized_score", "normalized_score_ranking.png", "Normalized score by policy"),
@@ -280,13 +292,13 @@ def _render_html(
         "Policies Evaluated": int(summary_df["policy"].nunique()),
         "Scenarios": int(summary_df["scenario"].nunique()),
         "Seeds": int(summary_df["seed"].nunique()),
-        "Tap Success (overall)": f"{100.0 * summary_df['tap_success'].mean():.1f}%",
+        "Tap Ready (overall)": f"{100.0 * summary_df['tap_ready'].mean():.1f}%",
     }
     kpi_cards = "".join([f"<div class='kpi-card'><div class='kpi-title'>{k}</div><div class='kpi-value'>{v}</div></div>" for k, v in kpis.items()])
 
     figure_labels = {
         "reward_mean_std.png": "Figure 1. Mean reward by evaluated policy",
-        "tap_success_rate.png": "Figure 2. Tap success rate by evaluated policy",
+        "tap_ready_rate.png": "Figure 2. Tap ready rate by evaluated policy",
         "energy_per_ton.png": "Figure 3. Energy per ton by evaluated policy",
         "violation_count.png": "Figure 4. Violation count by evaluated policy",
         "normalized_score_ranking.png": "Figure 5. Normalized score by evaluated policy",
@@ -300,8 +312,8 @@ def _render_html(
             for f in figures
         ]
     )
-    score_equation = "normalized_score = w_reward*reward_norm + w_success*tap_success_norm + w_energy*energy_efficiency_norm + w_safety*safety_norm + w_robustness*scenario_robustness_norm"
-    score_cols = ["policy", "normalized_score", "reward_norm", "tap_success_norm", "energy_efficiency_norm", "safety_norm", "scenario_robustness_norm"]
+    score_equation = "normalized_score = 0.25*tap_ready_norm + 0.20*production_norm + 0.20*production_efficiency_norm + 0.15*energy_per_ton_norm + 0.10*quality_norm + 0.10*safety_norm"
+    score_cols = ["policy", "normalized_score", "tap_ready_norm", "production_norm", "production_efficiency_norm", "energy_per_ton_norm", "quality_norm", "safety_norm"]
     score_components_html = _format_table(policy_stats[score_cols])
     html = f"""
 <html>
@@ -330,7 +342,7 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 <p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes (expected default: 61.0 min).</p>
 <p>Policies: {policy_list}</p>
 </div>
-<div class='panel'><h2>Balanced Multi-Objective Selection Rule</h2><p><code>{score_equation}</code></p><p>Weights: w_reward=0.45, w_success=0.25, w_energy=0.15, w_safety=0.10, w_robustness=0.05.</p><p>Best policy is selected by balanced normalized_score, not by raw reward only.</p></div>
+<div class='panel'><h2>Balanced Multi-Objective Selection Rule</h2><p><code>{score_equation}</code></p><p>Weights: 0.25 tap_ready, 0.20 production, 0.20 production_efficiency, 0.15 energy_per_ton, 0.10 quality, 0.10 safety.</p><p>Best policy is selected by balanced normalized_score, not by raw reward only.</p></div>
 <div class='panel'><h2>KPI Cards</h2><div class='kpi-grid'>{kpi_cards}</div></div>
 <div class='panel'><h2>Policy Coverage</h2>{_format_table(policy_coverage)}</div>
 <div class='panel warning'><h2>Diagnostic Warnings</h2><ul>{warning_html}</ul></div>
@@ -520,7 +532,7 @@ def main() -> None:
             f"Simulation horizon ({simulated_minutes:.1f} min) ends before tap window starts ({tap_window_start_min:.1f} min). "
             "Tap metrics and energy_per_ton/Pareto charts may be invalid."
         )
-    no_tap = summary_df[summary_df["tap_success"] == False]["policy"].unique().tolist()  # noqa: E712
+    no_tap = summary_df[summary_df["tap_ready"] == False]["policy"].unique().tolist()  # noqa: E712
     if no_tap:
         warnings.append("No successful taps for: " + ", ".join(_display_name(p) for p in sorted(no_tap)))
 
