@@ -68,7 +68,7 @@ def run_benchmark(
                 tap_blocked_by_safety_filter_count = int(outcome.episode_df.get("invalid_tap_command", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
                 termination_reason = str(last.get("termination_reason", "tapped" if tapped_kg > 0.0 else "heat_end_without_tap"))
                 melt_temp_c = float(controller.config.steel_melt_temp_k - 273.15)
-                tap_ready = bool(max_melted_fraction >= 0.90 and final_temp_c >= melt_temp_c)
+                tap_ready = bool(max_melted_fraction >= 0.95 and final_temp_c >= melt_temp_c)
                 rows.append(
                     {
                         "seed": seed,
