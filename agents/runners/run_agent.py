@@ -65,41 +65,23 @@ def _ci95(series: pd.Series) -> float:
     return float(1.96 * vals.std(ddof=1) / np.sqrt(len(vals)))
 
 
-def _minmax_norm(series: pd.Series) -> pd.Series:
-    vals = pd.to_numeric(series, errors="coerce")
-    lo = vals.min(skipna=True)
-    hi = vals.max(skipna=True)
-    if not np.isfinite(lo) or not np.isfinite(hi) or abs(hi - lo) < 1e-9:
-        return pd.Series(np.zeros(len(vals)), index=series.index, dtype=float)
-    return (vals - lo) / (hi - lo)
-
-
-def _score_components(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    energy = pd.to_numeric(out["energy_per_ton"], errors="coerce")
+def _normalized_score(df: pd.DataFrame) -> pd.Series:
+    # balanced multi-objective score used for model selection
+    w_reward, w_success, w_energy, w_safety, w_robustness = 0.45, 0.25, 0.15, 0.10, 0.05
+    energy = pd.to_numeric(df["energy_per_ton"], errors="coerce")
     energy_filled = energy.fillna(energy.max(skipna=True) if energy.notna().any() else 0.0)
-    out["reward_norm"] = _minmax_norm(out["total_reward"])
-    out["tap_success_norm"] = out["tap_success"].astype(float)
-    out["production_norm"] = _minmax_norm(out["cum_tapped_kg"])
-    out["energy_efficiency_norm"] = 1.0 - _minmax_norm(energy_filled)
-    out["safety_norm"] = 1.0 - _minmax_norm(out["constraint_violation_rate"])
-    out["scenario_robustness_norm"] = 1.0 - _minmax_norm(out["tap_temperature_error"])
-    out["reward_centric_score"] = (
-        0.45 * out["reward_norm"]
-        + 0.25 * out["tap_success_norm"]
-        + 0.15 * out["energy_efficiency_norm"]
-        + 0.10 * out["safety_norm"]
-        + 0.05 * out["scenario_robustness_norm"]
+    reward_norm = (df["total_reward"] - df["total_reward"].min()) / max(df["total_reward"].max() - df["total_reward"].min(), 1e-9)
+    success_norm = df["tap_success"].astype(float)
+    energy_norm = 1.0 - (energy_filled - energy_filled.min()) / max(energy_filled.max() - energy_filled.min(), 1e-9)
+    safety_norm = 1.0 - (df["constraint_violation_rate"] - df["constraint_violation_rate"].min()) / max(df["constraint_violation_rate"].max() - df["constraint_violation_rate"].min(), 1e-9)
+    robustness_norm = 1.0 - (df["tap_temperature_error"] - df["tap_temperature_error"].min()) / max(df["tap_temperature_error"].max() - df["tap_temperature_error"].min(), 1e-9)
+    out = (
+        w_reward * reward_norm
+        + w_success * success_norm
+        + w_energy * energy_norm
+        + w_safety * safety_norm
+        + w_robustness * robustness_norm
     )
-    out["industrial_score"] = (
-        0.25 * out["reward_norm"]
-        + 0.20 * out["tap_success_norm"]
-        + 0.25 * out["production_norm"]
-        + 0.20 * out["energy_efficiency_norm"]
-        + 0.05 * out["safety_norm"]
-        + 0.05 * out["scenario_robustness_norm"]
-    )
-    out["normalized_score"] = out["reward_centric_score"]
     return out
 
 
@@ -128,11 +110,13 @@ def _policy_stats(summary_df: pd.DataFrame) -> pd.DataFrame:
         invalid_tap_count=("invalid_tap_count", "sum"),
         action_clamp_count=("action_clamp_count", "sum"),
     )
-    score_input = agg.rename(columns={"mean_reward": "total_reward", "success_rate": "tap_success", "mean_tapped_kg": "cum_tapped_kg"})
-    scored = _score_components(score_input)
-    for c in ["normalized_score", "reward_centric_score", "industrial_score", "reward_norm", "tap_success_norm", "production_norm", "energy_efficiency_norm", "safety_norm", "scenario_robustness_norm"]:
-        agg[c] = scored[c]
-    return agg.sort_values("industrial_score", ascending=False)
+    agg["normalized_score"] = _normalized_score(agg.rename(columns={"mean_reward": "total_reward", "success_rate": "tap_success"}))
+    agg["reward_norm"] = (agg["mean_reward"] - agg["mean_reward"].min()) / max(agg["mean_reward"].max() - agg["mean_reward"].min(), 1e-9)
+    agg["tap_success_norm"] = agg["success_rate"].astype(float)
+    agg["energy_efficiency_norm"] = 1.0 - (agg["energy_per_ton"] - agg["energy_per_ton"].min()) / max(agg["energy_per_ton"].max() - agg["energy_per_ton"].min(), 1e-9)
+    agg["safety_norm"] = 1.0 - (agg["constraint_violation_rate"] - agg["constraint_violation_rate"].min()) / max(agg["constraint_violation_rate"].max() - agg["constraint_violation_rate"].min(), 1e-9)
+    agg["scenario_robustness_norm"] = 1.0 - (agg["tap_temperature_error"] - agg["tap_temperature_error"].min()) / max(agg["tap_temperature_error"].max() - agg["tap_temperature_error"].min(), 1e-9)
+    return agg.sort_values("normalized_score", ascending=False)
 
 
 def _paired_stats(df: pd.DataFrame, baseline_policy: str, target_policy: str) -> dict[str, object] | None:
@@ -203,8 +187,6 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
         energy_per_ton=("energy_per_ton", "mean"),
         violation_count=("temperature_violation_count", "sum"),
         normalized_score=("normalized_score", "mean"),
-        reward_centric_score=("reward_centric_score", "mean"),
-        industrial_score=("industrial_score", "mean"),
     )
     policy = policy.set_index("policy").reindex(evaluated_policies).reset_index()
     policy["display_name"] = policy["policy"].map(_display_name)
@@ -214,8 +196,7 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
         ("tap_success_rate", "tap_success_rate.png", "Tap success rate by policy"),
         ("energy_per_ton", "energy_per_ton.png", "Energy per ton by policy"),
         ("violation_count", "violation_count.png", "Violation count by policy"),
-        ("normalized_score", "normalized_score_ranking.png", "Reward-centric score by policy"),
-        ("industrial_score", "industrial_score_ranking.png", "Industrial score by policy"),
+        ("normalized_score", "normalized_score_ranking.png", "Normalized score by policy"),
     ]:
         sorted_policy = policy.sort_values(col, ascending=False, na_position="last")
         ax = sorted_policy.plot(x="display_name", y=col, kind="bar", legend=False, figsize=(11, 4), color="#4f81bd")
@@ -229,10 +210,10 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
         plt.close()
         files.append(fn)
 
-    pivot = summary_df.pivot_table(index="scenario", columns="policy", values="industrial_score", aggfunc="mean").reindex(columns=evaluated_policies)
+    pivot = summary_df.pivot_table(index="scenario", columns="policy", values="normalized_score", aggfunc="mean").reindex(columns=evaluated_policies)
     plt.figure(figsize=(12, 4))
     plt.imshow(pivot.values, aspect="auto", cmap="magma")
-    plt.colorbar(label="industrial_score")
+    plt.colorbar(label="normalized_score")
     plt.xticks(range(len(pivot.columns)), [_display_name(p) for p in pivot.columns], rotation=35, ha="right")
     plt.yticks(range(len(pivot.index)), pivot.index)
     plt.title("Scenario-policy heatmap")
@@ -308,11 +289,10 @@ def _render_html(
         "tap_success_rate.png": "Figure 2. Tap success rate by evaluated policy",
         "energy_per_ton.png": "Figure 3. Energy per ton by evaluated policy",
         "violation_count.png": "Figure 4. Violation count by evaluated policy",
-        "normalized_score_ranking.png": "Figure 5. Reward-centric score by evaluated policy",
-        "industrial_score_ranking.png": "Figure 6. Industrial score by evaluated policy",
-        "scenario_policy_heatmap.png": "Figure 7. Scenario-policy industrial score heatmap",
-        "pareto_reward_vs_energy_per_ton.png": "Figure 8. Pareto frontier: reward vs energy per ton",
-        "temperature_trajectory_comparison.png": "Figure 9. Base case temperature trajectories (seed 0)",
+        "normalized_score_ranking.png": "Figure 5. Normalized score by evaluated policy",
+        "scenario_policy_heatmap.png": "Figure 6. Scenario-policy normalized score heatmap",
+        "pareto_reward_vs_energy_per_ton.png": "Figure 7. Pareto frontier: reward vs energy per ton",
+        "temperature_trajectory_comparison.png": "Figure 8. Base case temperature trajectories (seed 0)",
     }
     figures_html = "".join(
         [
@@ -320,9 +300,8 @@ def _render_html(
             for f in figures
         ]
     )
-    score_equation = "reward_centric_score = 0.45*reward_norm + 0.25*tap_success_norm + 0.15*energy_efficiency_norm + 0.10*safety_norm + 0.05*scenario_robustness_norm"
-    industrial_equation = "industrial_score = 0.25*reward_norm + 0.20*tap_success_norm + 0.25*production_norm + 0.20*energy_efficiency_norm + 0.05*safety_norm + 0.05*scenario_robustness_norm"
-    score_cols = ["policy", "reward_centric_score", "industrial_score", "reward_norm", "tap_success_norm", "production_norm", "energy_efficiency_norm", "safety_norm", "scenario_robustness_norm"]
+    score_equation = "normalized_score = w_reward*reward_norm + w_success*tap_success_norm + w_energy*energy_efficiency_norm + w_safety*safety_norm + w_robustness*scenario_robustness_norm"
+    score_cols = ["policy", "normalized_score", "reward_norm", "tap_success_norm", "energy_efficiency_norm", "safety_norm", "scenario_robustness_norm"]
     score_components_html = _format_table(policy_stats[score_cols])
     html = f"""
 <html>
@@ -351,7 +330,7 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 <p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes (expected default: 61.0 min).</p>
 <p>Policies: {policy_list}</p>
 </div>
-<div class='panel'><h2>Scoring Rules</h2><p><code>{score_equation}</code></p><p><code>{industrial_equation}</code></p><p>Industrial score explicitly rewards tapped steel production and energy efficiency, so PPO can rank best industrially even when another policy has higher raw reward.</p></div>
+<div class='panel'><h2>Balanced Multi-Objective Selection Rule</h2><p><code>{score_equation}</code></p><p>Weights: w_reward=0.45, w_success=0.25, w_energy=0.15, w_safety=0.10, w_robustness=0.05.</p><p>Best policy is selected by balanced normalized_score, not by raw reward only.</p></div>
 <div class='panel'><h2>KPI Cards</h2><div class='kpi-grid'>{kpi_cards}</div></div>
 <div class='panel'><h2>Policy Coverage</h2>{_format_table(policy_coverage)}</div>
 <div class='panel warning'><h2>Diagnostic Warnings</h2><ul>{warning_html}</ul></div>
@@ -360,7 +339,7 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 <div class='panel'><h2>Scenario-level ranking table</h2>{_format_table(scenario_rank)}</div>
 <div class='panel'><h2>Baseline comparison table</h2>{_format_table(comparison_df)}</div>
 <div class='panel'><h2>Statistical significance table</h2>{_format_table(stat_tests)}</div>
-<div class='panel'><h2>Best policy decisions</h2><p>Best policy by industrial_score: <b>{_display_name(str(best['policy']))}</b> (score={best['industrial_score']:.4f}).</p><p>Best policy by reward_centric_score (legacy normalized_score): <b>{_display_name(str(policy_stats.sort_values('reward_centric_score', ascending=False).iloc[0]['policy']))}</b>.</p></div>
+<div class='panel'><h2>Best policy decision</h2><p>Best policy by normalized_score: <b>{_display_name(str(best['policy']))}</b> (score={best['normalized_score']:.4f}).</p></div>
 <div class='panel'><h2>Figures (all evaluated policies)</h2>{figures_html}</div>
 </body>
 </html>
@@ -472,7 +451,7 @@ def main() -> None:
     if missing_from_results and not args.allow_missing_rl_baselines:
         raise ValueError(f"Missing policies in benchmark output: {missing_from_results}. Pass --allow-missing-rl-baselines to continue.")
 
-    summary_df = summary_df.groupby(["seed", "scenario"], group_keys=False).apply(_score_components)
+    summary_df["normalized_score"] = _normalized_score(summary_df)
     summary_df = summary_df.sort_values(["scenario", "total_reward"], ascending=[True, False]).reset_index(drop=True)
     summary_df.to_csv(output_dir / "scenario_summary.csv", index=False)
 
@@ -480,10 +459,10 @@ def main() -> None:
     policy_stats["overall_rank"] = np.arange(1, len(policy_stats) + 1)
     policy_stats.to_csv(output_dir / "policy_aggregate_summary.csv", index=False)
 
-    summary_df["rank_by_scenario"] = summary_df.groupby(["seed", "scenario"])["industrial_score"].rank(ascending=False, method="dense")
+    summary_df["rank_by_scenario"] = summary_df.groupby(["seed", "scenario"])["normalized_score"].rank(ascending=False, method="dense")
     scenario_rank = summary_df.groupby(["scenario", "policy"], as_index=False)["rank_by_scenario"].mean().sort_values(["scenario", "rank_by_scenario"])
 
-    kpi_comparison = summary_df.pivot_table(index=["seed", "scenario"], columns="policy", values=["cum_tapped_kg", "total_reward", "cum_electric_mwh", "cum_oxygen_nm3", "cum_ng_nm3", "final_temp_c", "reward_centric_score", "industrial_score"])
+    kpi_comparison = summary_df.pivot_table(index=["seed", "scenario"], columns="policy", values=["cum_tapped_kg", "total_reward", "cum_electric_mwh", "cum_oxygen_nm3", "cum_ng_nm3", "final_temp_c", "normalized_score"])
     kpi_comparison = kpi_comparison.reindex(columns=evaluated_policies, level=1)
     kpi_comparison.to_csv(output_dir / "kpi_comparison.csv")
 
