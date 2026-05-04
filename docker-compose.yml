@@ -2,9 +2,34 @@ services:
   full-run:
     build: .
     image: eaf-twin:latest
-    command: ["run", "--config", "configs/base_case.json", "--output-dir", "outputs"]
+    entrypoint: ["bash", "-lc"]
+    command:
+      - >-
+        python -m agents.runners.train_agent
+        --config configs/base_case.json
+        --output-dir results/agent_training
+        --algorithm all
+        --episodes 2000
+        --iterations 200
+        --max-steps 610
+        --rollout-steps 610
+        --epochs 8
+        --batch-size 64
+        --learning-rate 0.002
+        --seed 10
+        &&
+        python -m agents.runners.run_agent
+        --config configs/base_case.json
+        --output-dir results/agent_run
+        --training-dir results/agent_training
+        --seeds 30
+        --n-scenarios 6
+        --model C
+        --max-steps 610
+        --mpc-horizon 8
+        --include-rl-baselines
     volumes:
-      - ./outputs:/app/outputs
+      - ./results:/app/results
 
   train-agent:
     build: .
