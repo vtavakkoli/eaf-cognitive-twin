@@ -68,6 +68,12 @@ python -m agents.runners.run_agent \
 
 Docker:
 ```bash
+docker-compose up --build build-agent
+```
+
+Run individual stages:
+```bash
+docker-compose up --build train-agent
 docker-compose up --build run-agent
 ```
 
