@@ -217,7 +217,7 @@ class TestAgentRunners(unittest.TestCase):
             self.assertIn("Q-Learning", html)
             self.assertIn("DQN", html)
             self.assertIn("PPO", html)
-            self.assertIn("Proposed Safe PPO-Agentic MPC", html)
+            self.assertIn("PPO-SafeAgent-MPC", html)
             expected_rl = [
                 "ppo",
                 "q_learning",

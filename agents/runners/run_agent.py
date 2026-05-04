@@ -36,14 +36,14 @@ POLICY_LABELS = {
     "q_learning": "Q-Learning",
     "dqn": "DQN",
     "ppo": "PPO",
-    "safe_ppo_agentic_mpc": "Proposed Safe PPO-Agentic MPC",
-    "safe_ppo_agentic_sac": "Proposed Safe PPO-Agentic SAC",
-    "safe_ppo_agentic_td3": "Proposed Safe PPO-Agentic TD3",
-    "safe_ppo_agentic_bc": "Proposed Safe PPO-Agentic BC",
-    "safe_ppo_agentic_td3_bc": "Proposed Safe PPO-Agentic TD3 + BC",
+    "safe_ppo_agentic_mpc": "PPO-SafeAgent-MPC",
+    "safe_ppo_agentic_sac": "PPO-SafeAgent-SAC",
+    "safe_ppo_agentic_td3": "PPO-SafeAgent-TD3",
+    "safe_ppo_agentic_bc": "PPO-SafeAgent-BC",
+    "safe_ppo_agentic_td3_bc": "PPO-SafeAgent-TD3BC",
     "behavior_cloning": "Behavior Cloning",
-    "sac_inspired": "SAC-Inspired",
-    "td3_inspired": "TD3-Inspired",
+    "sac_inspired": "SAC Heuristic",
+    "td3_inspired": "TD3 Heuristic",
 }
 
 
@@ -217,7 +217,7 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
         sorted_policy = policy.sort_values(col, ascending=False, na_position="last")
         ax = sorted_policy.plot(x="display_name", y=col, kind="bar", legend=False, figsize=(11, 4), color="#4f81bd")
         for patch, policy_key in zip(ax.patches, sorted_policy["policy"]):
-            if policy_key == "safe_ppo_agentic_mpc":
+            if policy_key == "safe_ppo_agentic_td3_bc":
                 patch.set_color("#d62728")
         ax.set_title(title)
         ax.set_xlabel("")
@@ -243,8 +243,8 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
         g = summary_df[summary_df["policy"] == p]
         if g.empty:
             continue
-        marker = "*" if p == "safe_ppo_agentic_mpc" else "o"
-        size = 180 if p == "safe_ppo_agentic_mpc" else 80
+        marker = "*" if p == "safe_ppo_agentic_td3_bc" else "o"
+        size = 180 if p == "safe_ppo_agentic_td3_bc" else 80
         plt.scatter(g["energy_per_ton"].mean(), g["total_reward"].mean(), label=_display_name(p), marker=marker, s=size)
     plt.legend(fontsize=8)
     plt.xlabel("energy_per_ton")
@@ -263,7 +263,7 @@ def _plot_all_figures(summary_df: pd.DataFrame, output_dir: Path, evaluated_poli
             continue
         d = pd.read_csv(path)
         if {"time_min", "bath_temp_c"}.issubset(d.columns):
-            linewidth = 2.5 if p == "safe_ppo_agentic_mpc" else 1.2
+            linewidth = 2.5 if p == "safe_ppo_agentic_td3_bc" else 1.2
             plt.plot(d["time_min"], d["bath_temp_c"], label=_display_name(p), linewidth=linewidth)
     plt.legend(fontsize=7)
     plt.title("Temperature trajectory comparison (base_case, seed0)")
@@ -343,6 +343,7 @@ img {{ max-width: 1000px; width: 100%; border-radius: 10px; border: 1px solid #e
 <div class='panel'>
 <h1>EAF Benchmark Report: {policy_list}</h1>
 <p>All policies are evaluated on Model C enhanced hybrid simulator.</p>
+<p><b>PPO-SafeAgent</b> denotes the PPO-guided agentic safety/supervisory layer; suffixes (TD3BC, TD3, BC, MPC, SAC) identify the embedded controller or policy module.</p>
 <p>Simulation budget: {max_steps} steps, dt_s = {dt_s} sec, equivalent to {max_steps*dt_s/60:.1f} simulated minutes (expected default: 61.0 min).</p>
 <p>Policies: {policy_list}</p>
 </div>
