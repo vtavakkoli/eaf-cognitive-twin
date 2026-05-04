@@ -12,6 +12,7 @@ from agents.policies.safe_ppo_agentic_bc import SafePPOAgenticBCPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
 from agents.policies.safe_ppo_agentic_sac import SafePPOAgenticSACPolicy
 from agents.policies.safe_ppo_agentic_td3 import SafePPOAgenticTD3Policy
+from agents.policies.safe_ppo_agentic_td3_bc import SafePPOAgenticTD3BCPolicy
 from agents.policies.sac_inspired_policy import SACInspiredPolicy
 from agents.policies.td3_inspired_policy import TD3InspiredPolicy
 from agents.policies.trainable_policy import TrainablePolicy
@@ -31,6 +32,7 @@ __all__ = [
     "SafePPOAgenticMPCPolicy",
     "SafePPOAgenticSACPolicy",
     "SafePPOAgenticTD3Policy",
+    "SafePPOAgenticTD3BCPolicy",
     "SafePPOAgenticBCPolicy",
     "BehaviorCloningPolicy",
     "SACInspiredPolicy",

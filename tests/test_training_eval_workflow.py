@@ -21,7 +21,7 @@ def test_run_agent_requires_missing_rl_checkpoints_by_default(tmp_path):
         mpc_horizon = 8
         allow_missing_rl_baselines = True
 
-    policies, missing, status = _build_policies(Args())
+    policies, missing, status, warnings = _build_policies(Args())
     assert "ppo" in missing
     assert status["ppo"] == "missing checkpoint"
     assert "ppo" not in policies
