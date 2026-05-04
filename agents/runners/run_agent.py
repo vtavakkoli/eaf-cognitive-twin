@@ -23,6 +23,7 @@ from agents.policies.safe_ppo_agentic_bc import SafePPOAgenticBCPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
 from agents.policies.safe_ppo_agentic_sac import SafePPOAgenticSACPolicy
 from agents.policies.safe_ppo_agentic_td3 import SafePPOAgenticTD3Policy
+from agents.policies.safe_ppo_agentic_td3_bc import SafePPOAgenticTD3BCPolicy
 from agents.policies.td3_inspired_policy import TD3InspiredPolicy
 from agents.policies.trainable_policy import TrainablePolicy
 from agents.runners.benchmark_runner import run_benchmark
@@ -39,6 +40,7 @@ POLICY_LABELS = {
     "safe_ppo_agentic_sac": "Proposed Safe PPO-Agentic SAC",
     "safe_ppo_agentic_td3": "Proposed Safe PPO-Agentic TD3",
     "safe_ppo_agentic_bc": "Proposed Safe PPO-Agentic BC",
+    "safe_ppo_agentic_td3_bc": "Proposed Safe PPO-Agentic TD3 + BC",
     "behavior_cloning": "Behavior Cloning",
     "sac_inspired": "SAC-Inspired",
     "td3_inspired": "TD3-Inspired",
@@ -389,6 +391,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             "safe_ppo_agentic_sac": (args.training_dir / "safe_ppo_agentic_sac" / "best_safe_ppo_agentic_sac_policy.pt", SafePPOAgenticSACPolicy.load),
             "safe_ppo_agentic_td3": (args.training_dir / "safe_ppo_agentic_td3" / "best_safe_ppo_agentic_td3_policy.pt", SafePPOAgenticTD3Policy.load),
             "safe_ppo_agentic_bc": (args.training_dir / "safe_ppo_agentic_bc" / "best_safe_ppo_agentic_bc_policy.pt", lambda path: SafePPOAgenticBCPolicy.load(path, args.training_dir / "behavior_cloning" / "policy.json")),
+            "safe_ppo_agentic_td3_bc": (args.training_dir / "safe_ppo_agentic_td3_bc" / "best_safe_ppo_agentic_td3_bc_policy.pt", lambda path: SafePPOAgenticTD3BCPolicy.load(path, args.training_dir / "behavior_cloning" / "policy.json")),
         }
         for name, (path, loader) in ckpts.items():
             if path.exists():
