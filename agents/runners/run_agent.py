@@ -385,7 +385,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
     if args.include_rl_baselines:
         ckpts = {
             "q_learning": (args.training_dir / "q_learning" / "q_table.json", QLearningPolicy.load),
-            "dqn": (args.training_dir / "dqn" / "best_policy.npy", DQNPolicy.load),
+            "dqn": (args.training_dir / "dqn" / "best_policy.pt", DQNPolicy.load),
             "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
             "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
             "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_agentic_mpc_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
@@ -398,7 +398,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             if path.exists():
                 try:
                     loaded = loader(path)
-                    if name == "dqn" and getattr(loaded, "weights", np.zeros((1, 1))).shape[1] != 13:
+                    if name == "dqn" and int(getattr(loaded, "input_dim", 0)) != 13:
                         checkpoint_status[name] = "checkpoint architecture mismatch"
                         checkpoint_warnings.append(f"DQN checkpoint architecture mismatch at {path}")
                     else:
