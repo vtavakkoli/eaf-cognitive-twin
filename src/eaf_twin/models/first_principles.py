@@ -1,0 +1,279 @@
+from __future__ import annotations
+
+import math
+
+from eaf_twin.constants import SECONDS_PER_MIN, SIGMA
+from eaf_twin.models.base import BaseEAFModel, start_or_continue_tapping
+from eaf_twin.simulation.schedule import smooth_step, stage_name
+from eaf_twin.units import clamp
+
+
+class FirstPrinciplesModel(BaseEAFModel):
+    name = "Model_B_first_principles"
+
+    def __init__(self, config, enhanced: bool = False):
+        super().__init__(config)
+        self.enhanced = enhanced
+        if enhanced:
+            self.name = "Model_C_enhanced_hybrid"
+
+    def _apply_metal_charge_event(
+        self,
+        state,
+        scrap_kg: float,
+        dri_kg: float,
+        charge_temp_k: float,
+        interaction_factor: float = 0.015,
+    ) -> None:
+        if scrap_kg <= 0 and dri_kg <= 0:
+            return
+
+        added_mass = scrap_kg + dri_kg
+        old_solid = max(state.solid_scrap_kg + state.solid_dri_kg - added_mass, 0.0)
+        if old_solid > 0:
+            state.solid_scrap_temp_k = (old_solid * state.solid_scrap_temp_k + added_mass * charge_temp_k) / max(old_solid + added_mass, 1e-9)
+        else:
+            state.solid_scrap_temp_k = charge_temp_k
+
+        m_liq = max(state.liquid_steel_kg, 0.0)
+        if m_liq > 1e-6:
+            t_m = self.config.steel_melt_temp_k
+            if state.liquid_steel_temp_k > t_m:
+                cap_liq = m_liq * self.config.cp_steel_j_kgk
+                interacting_mass = interaction_factor * added_mass
+                cap_sol = interacting_mass * self.config.cp_scrap_j_kgk
+                available_j = cap_liq * (state.liquid_steel_temp_k - t_m)
+                desired_transfer = cap_sol * (state.liquid_steel_temp_k - charge_temp_k)
+                actual_transfer = min(available_j, desired_transfer)
+                state.liquid_steel_temp_k -= actual_transfer / max(cap_liq, 1e-9)
+
+        state.steel_temp_k = state.liquid_steel_temp_k
+
+    def apply_charge_events(self, state, t_prev_s, t_now_s):
+        t_prev_min, t_now_min = t_prev_s / SECONDS_PER_MIN, t_now_s / SECONDS_PER_MIN
+        for ev in self.config.charge_events:
+            if t_prev_min < ev.time_min <= t_now_min:
+                added_mass = ev.scrap_kg + ev.dri_kg
+                if added_mass > 0:
+                    state.roof_open_remaining_s = max(state.roof_open_remaining_s, 45.0)
+                    state.solid_scrap_kg += ev.scrap_kg
+                    state.solid_dri_kg += ev.dri_kg
+                    self._apply_metal_charge_event(state, ev.scrap_kg, ev.dri_kg, self.config.scrap_temp_k, interaction_factor=0.015)
+                    ratio = added_mass / max(state.slag_kg + added_mass, 1.0)
+                    state.slag_temp_k = (
+                        state.slag_kg * state.slag_temp_k + added_mass * self.config.scrap_temp_k * 0.9
+                    ) / max(state.slag_kg + added_mass * 0.2, 1e-9)
+                    state.slag_temp_k = max(self.config.ambient_temp_k, state.slag_temp_k - 90.0 * ratio)
+
+    def _step_dynamics(self, state, inputs, warnings):
+        cfg = self.config
+
+        def cp_solid_steel_j_kgk(t_k: float) -> float:
+            return cfg.cp_scrap_j_kgk * (1.0 + 8.5e-5 * (t_k - cfg.ambient_temp_k))
+
+        def cp_liquid_steel_j_kgk(t_k: float) -> float:
+            return cfg.cp_steel_j_kgk * (1.0 + 6.5e-5 * max(0.0, t_k - cfg.steel_melt_temp_k))
+
+        dt = cfg.dt_s
+        t_m = cfg.steel_melt_temp_k
+        stg = stage_name(state.time_s / SECONDS_PER_MIN, state.melted_fraction)
+
+        power_w = inputs["power_mw"] * 1e6
+        o2_flow = inputs["oxygen_nm3_min"] / 60.0
+        ng_flow = inputs["ng_nm3_min"] / 60.0
+        c_flow = inputs["carbon_kg_min"] / 60.0
+        flux_flow = inputs["flux_kg_min"] / 60.0
+
+        foam = 0.35
+        if self.enhanced:
+            ratio = c_flow / max(o2_flow * 0.18, 1e-3)
+            foam = clamp(0.35 + 0.22 * math.tanh(1.6 * (ratio - 1.0)), 0.05, 0.95)
+
+        eta = {
+            "bore_in": cfg.eta_arc_bore_in,
+            "main_melting": cfg.eta_arc_melting,
+            "refining": cfg.eta_arc_refining,
+            "superheat": cfg.eta_arc_superheat,
+            "tapping": 0.4,
+        }[stg]
+        eta += 0.04 * smooth_step(state.melted_fraction, 0.2, 0.95)
+        eta += 0.06 * foam
+        eta = clamp(eta, 0.45, 0.95)
+
+        q_elec = power_w * dt
+        q_arc_useful = eta * q_elec
+        q_burn = ng_flow * cfg.lhv_ng_j_nm3 * dt * cfg.eta_burner
+        q_oxy = o2_flow * cfg.oxygen_heat_j_nm3 * cfg.oxygen_reaction_efficiency * dt
+        q_c = c_flow * cfg.carbon_heat_j_kg * cfg.carbon_reaction_efficiency * dt
+        q_chem = q_burn + q_oxy + q_c
+
+        fe_oxid = min(state.liquid_steel_kg * 0.0015, o2_flow * cfg.fe_oxidation_ratio_per_nm3_o2 * dt)
+        oxide = 1.29 * fe_oxid
+        decarb = min(state.steel_carbon_kg, o2_flow * cfg.decarb_kg_per_nm3_o2 * dt)
+        state.steel_carbon_kg += c_flow * dt - decarb - 0.0006 * state.steel_carbon_kg * dt
+        state.feo_slag_kg += oxide
+        state.liquid_steel_kg = max(0.0, state.liquid_steel_kg - fe_oxid)
+
+        solid_mass = max(state.solid_scrap_kg + state.solid_dri_kg, 0.0)
+        liquid_mass = max(state.liquid_steel_kg, 0.0)
+        total_metal_mass = max(liquid_mass + solid_mass, 1.0)
+        sf = solid_mass / total_metal_mass
+
+        cp_sol = cp_solid_steel_j_kgk(state.solid_scrap_temp_k)
+        cp_liq = cp_liquid_steel_j_kgk(state.liquid_steel_temp_k)
+
+        q_arc_ss = q_arc_useful * sf * 0.85
+        q_arc_slag = q_arc_useful * 0.10
+        q_arc_mm = q_arc_useful - q_arc_ss - q_arc_slag
+
+        q_burn_ss = q_burn * sf * 0.75
+        q_burn_slag = q_burn * 0.25
+        q_burn_mm = 0.0
+
+        q_chem_mm = (q_oxy + q_c) * 0.70
+        q_chem_slag = (q_oxy + q_c) * 0.30
+
+        k_mm_ss = 25000.0 + 40000.0 * (liquid_mass / 100000.0)
+        q_mm_to_ss_unbounded = k_mm_ss * max(0.0, state.liquid_steel_temp_k - state.solid_scrap_temp_k) * dt
+        available_sensible_j = max(0.0, liquid_mass * cp_liq * (state.liquid_steel_temp_k - t_m))
+        q_mm_to_ss = min(q_mm_to_ss_unbounded, available_sensible_j)
+        q_ss_to_mm = k_mm_ss * max(0.0, state.solid_scrap_temp_k - state.liquid_steel_temp_k) * dt
+
+        t_int_k = 0.6 * state.liquid_steel_temp_k + 0.4 * state.slag_temp_k
+        q_wall = cfg.ua_wall_w_k * max(0.0, t_int_k - cfg.ambient_temp_k) * dt * 0.15
+        q_rad = cfg.radiation_loss_factor * (1.0 - 0.3 * foam) * SIGMA * cfg.area_effective_m2 * max(0.0, t_int_k**4 - cfg.ambient_temp_k**4) * dt * 0.15
+
+        q_loss_total = q_wall + q_rad
+        q_loss_mm = q_loss_total * 0.40
+        q_loss_slag = q_loss_total * 0.60
+
+        q_flux_sink = flux_flow * dt * (cfg.cp_slag_j_kgk * max(0.0, state.slag_temp_k - cfg.ambient_temp_k) + 200000.0)
+
+        q_net_ss = q_arc_ss + q_burn_ss + q_mm_to_ss - q_ss_to_mm
+        q_net_mm_base = q_arc_mm + q_burn_mm + q_chem_mm - q_mm_to_ss + q_ss_to_mm - q_loss_mm
+        q_net_slag = q_arc_slag + q_burn_slag + q_chem_slag - q_loss_slag - q_flux_sink
+
+        melt_kg = 0.0
+        q_melt_actual = 0.0
+        region = "liquid_superheat"
+
+        if solid_mass > 1e-6:
+            region = "solid_heating"
+            cap_ss = solid_mass * cp_sol
+            state.solid_scrap_temp_k += q_net_ss / max(cap_ss, 1e-9)
+
+            if state.solid_scrap_temp_k >= t_m:
+                region = "phase_change"
+                excess_j = (state.solid_scrap_temp_k - t_m) * cap_ss
+                state.solid_scrap_temp_k = t_m
+
+                latent_scrap = cfg.latent_heat_steel_j_kg
+                latent_dri = cfg.latent_heat_steel_j_kg + cfg.dri_reduction_endotherm_j_kg
+                latent_mix = (state.solid_scrap_kg * latent_scrap + state.solid_dri_kg * latent_dri) / max(solid_mass, 1e-9)
+                melt_kg = excess_j / max(latent_mix, 1e-9)
+
+                if melt_kg >= solid_mass:
+                    melt_kg = solid_mass
+                    leftover_j = excess_j - melt_kg * latent_mix
+                    q_net_mm_base += leftover_j
+
+                scrap_ratio = state.solid_scrap_kg / solid_mass
+                dri_ratio = state.solid_dri_kg / solid_mass
+                m_scrap = melt_kg * scrap_ratio
+                m_dri = melt_kg * dri_ratio
+
+                state.solid_scrap_kg -= m_scrap
+                state.solid_dri_kg -= m_dri
+
+                new_liquid_metal = m_scrap + m_dri * cfg.dri_fe_metallization
+                if new_liquid_metal > 1e-6:
+                    current_cap = state.liquid_steel_kg * cp_liq
+                    added_cap = new_liquid_metal * cfg.cp_steel_j_kgk
+                    state.liquid_steel_temp_k = (state.liquid_steel_temp_k * current_cap + t_m * added_cap) / max(current_cap + added_cap, 1e-9)
+                    state.liquid_steel_kg += new_liquid_metal
+
+                state.slag_kg += m_dri * (1.0 - cfg.dri_fe_metallization)
+                q_melt_actual = m_scrap * latent_scrap + m_dri * latent_dri
+                state.cum_latent_heat_j += q_melt_actual
+        else:
+            q_net_mm_base += q_net_ss
+            state.solid_scrap_temp_k = state.liquid_steel_temp_k
+
+        k_mm_slag = cfg.slag_to_bath_heat_coeff_w_k
+        q_mm_to_slag = k_mm_slag * (state.liquid_steel_temp_k - state.slag_temp_k) * dt
+
+        q_net_mm_final = q_net_mm_base - q_mm_to_slag
+        q_net_slag_final = q_net_slag + q_mm_to_slag
+
+        if state.liquid_steel_kg > 1e-6:
+            cap_mm = state.liquid_steel_kg * cp_liq
+            state.liquid_steel_temp_k += q_net_mm_final / max(cap_mm, 1e-9)
+        else:
+            state.liquid_steel_temp_k = state.solid_scrap_temp_k
+
+        state.slag_kg += flux_flow * dt * cfg.flux_to_slag_factor + oxide
+        if state.slag_kg > 1e-6:
+            cap_slag = state.slag_kg * cfg.cp_slag_j_kgk
+            state.slag_temp_k += q_net_slag_final / max(cap_slag, 1e-9)
+        else:
+            state.slag_temp_k = state.liquid_steel_temp_k
+
+        if state.slag_temp_k < state.liquid_steel_temp_k + 15.0:
+            state.slag_temp_k = state.liquid_steel_temp_k + 15.0
+
+        q_gas_in = (q_chem * 0.15) + (power_w * dt * 0.05)
+        q_exhaust = cfg.cp_offgas_j_kgk * 20.0 * dt * (state.offgas_temp_k - cfg.ambient_temp_k)
+        gas_mass_equiv_kg = 300.0
+        gas_cap = gas_mass_equiv_kg * cfg.cp_offgas_j_kgk
+
+        state.offgas_temp_k += (q_gas_in - q_exhaust) / gas_cap
+        if state.roof_open_remaining_s > 0:
+            state.offgas_temp_k += (cfg.ambient_temp_k - state.offgas_temp_k) * (dt / 10.0)
+        state.offgas_temp_k = max(state.offgas_temp_k, cfg.ambient_temp_k)
+
+        state.steel_temp_k = state.liquid_steel_temp_k
+        state.solid_scrap_temp_k = max(state.solid_scrap_temp_k, cfg.ambient_temp_k)
+        state.liquid_steel_temp_k = max(state.liquid_steel_temp_k, cfg.ambient_temp_k)
+        state.slag_temp_k = max(state.slag_temp_k, cfg.ambient_temp_k)
+
+        tapped = start_or_continue_tapping(state, cfg, bool(inputs.get("tap_command", False)) if "tap_command" in inputs else None)
+        if tapped > 0:
+            region = "tapping"
+
+        state.cum_electric_j += q_elec
+        state.cum_chemical_j += q_chem
+        state.cum_useful_heat_j += q_arc_useful + q_burn + q_oxy + q_c
+        state.cum_losses_j += q_loss_total
+        state.cum_oxygen_nm3 += o2_flow * dt
+        state.cum_ng_nm3 += ng_flow * dt
+        state.cum_carbon_kg += c_flow * dt
+
+        m_liq_c = state.liquid_steel_kg
+        t_liq_c = state.liquid_steel_temp_k - 273.15
+        m_slag_c = state.slag_kg
+        t_slag_c = state.slag_temp_k - 273.15
+        t_mm_c = (m_slag_c * t_slag_c + m_liq_c * t_liq_c) / max(m_liq_c + m_slag_c, 1e-9)
+        t_ss_c = state.solid_scrap_temp_k - 273.15
+
+        return {
+            "stage": stg,
+            "foamy_factor": foam,
+            "eta_arc": eta,
+            "q_useful_mw": (q_arc_useful + q_burn + q_oxy + q_c) / max(dt, 1e-9) / 1e6,
+            "q_melt_mw": q_melt_actual / max(dt, 1e-9) / 1e6,
+            "q_loss_mw": q_loss_total / max(dt, 1e-9) / 1e6,
+            "melt_rate_kg_s": melt_kg / max(dt, 1e-9),
+            "phase_region": region,
+            "remaining_solid_kg": state.solid_scrap_kg + state.solid_dri_kg,
+            "latent_heat_consumed_gj": state.cum_latent_heat_j / 1e9,
+            "enthalpy_balance_residual_mj": 0.0,
+            "tapped_kg_s": tapped / max(dt, 1e-9),
+            "t_mm_c": t_mm_c,
+            "t_ss_c": t_ss_c,
+        }
+
+    def simulate(self):
+        return self.run_loop(self._step_dynamics)
+
+    def simulate_controlled(self, setpoint_fn):
+        return self.run_loop(self._step_dynamics, setpoint_fn=setpoint_fn)

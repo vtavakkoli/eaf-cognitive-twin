@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Model Scenario Results</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #1c2230;
+      --muted: #5f6b85;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --border: #e5e7eb;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 0 16px 32px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.8rem;
+    }
+
+    .subtitle {
+      margin: 0 0 20px;
+      color: var(--muted);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .tab-btn {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      background: var(--accent-soft);
+      border-color: #93c5fd;
+      color: #1d4ed8;
+    }
+
+    .tab-content {
+      display: none;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+    }
+
+    .tab-content.active { display: block; }
+
+    .scenario-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    .scenario-links a {
+      background: #eef2ff;
+      color: #3730a3;
+      text-decoration: none;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 0.9rem;
+      border: 1px solid #c7d2fe;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 18px;
+      font-size: 0.95rem;
+    }
+
+    thead th {
+      background: #f8fafc;
+      text-align: left;
+      border: 1px solid var(--border);
+      padding: 10px;
+    }
+
+    tbody td {
+      border: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+    }
+
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    .good { background: #dcfce7; color: #166534; }
+    .mid { background: #ffedd5; color: #9a3412; }
+    .bad { background: #fee2e2; color: #991b1b; }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+    }
+
+    .scenario-block {
+      margin-top: 12px;
+      border-top: 1px dashed var(--border);
+      padding-top: 12px;
+    }
+
+    .scenario-block h4 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      color: #334155;
+    }
+
+    .result-link {
+      display: inline-block;
+      margin-bottom: 10px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Model Results Dashboard</h1>
+    <p class="subtitle">Comparison of Model A, Model B, and Model C across multiple scenarios with tables and charts.</p>
+
+    <div class="tabs" id="tabs"></div>
+    <div id="tabContents"></div>
+  </div>
+
+  <script>
+    const data = {
+      "Model A": {
+        scenarios: [
+          { id: "A-S1", name: "Baseline Classification", accuracy: 0.92, precision: 0.89, recall: 0.90, latencyMs: 120, link: "https://example.com/results/model-a/s1" },
+          { id: "A-S2", name: "Noisy Input Stress", accuracy: 0.86, precision: 0.84, recall: 0.82, latencyMs: 145, link: "https://example.com/results/model-a/s2" },
+          { id: "A-S3", name: "High Throughput Batch", accuracy: 0.88, precision: 0.85, recall: 0.87, latencyMs: 105, link: "https://example.com/results/model-a/s3" }
+        ]
+      },
+      "Model B": {
+        scenarios: [
+          { id: "B-S1", name: "Baseline Classification", accuracy: 0.90, precision: 0.87, recall: 0.88, latencyMs: 110, link: "https://example.com/results/model-b/s1" },
+          { id: "B-S2", name: "Noisy Input Stress", accuracy: 0.83, precision: 0.80, recall: 0.81, latencyMs: 130, link: "https://example.com/results/model-b/s2" },
+          { id: "B-S3", name: "High Throughput Batch", accuracy: 0.91, precision: 0.89, recall: 0.90, latencyMs: 98, link: "https://example.com/results/model-b/s3" }
+        ]
+      },
+      "Model C": {
+        scenarios: [
+          { id: "C-S1", name: "Baseline Classification", accuracy: 0.94, precision: 0.92, recall: 0.91, latencyMs: 135, link: "https://example.com/results/model-c/s1" },
+          { id: "C-S2", name: "Noisy Input Stress", accuracy: 0.89, precision: 0.86, recall: 0.88, latencyMs: 150, link: "https://example.com/results/model-c/s2" },
+          { id: "C-S3", name: "High Throughput Batch", accuracy: 0.90, precision: 0.88, recall: 0.89, latencyMs: 115, link: "https://example.com/results/model-c/s3" }
+        ]
+      }
+    };
+
+    const tabsEl = document.getElementById("tabs");
+    const tabContentsEl = document.getElementById("tabContents");
+
+    function scoreClass(value) {
+      if (value >= 0.9) return "good";
+      if (value >= 0.85) return "mid";
+      return "bad";
+    }
+
+    function buildDashboard() {
+      Object.entries(data).forEach(([modelName, modelData], index) => {
+        const tabId = modelName.toLowerCase().replace(/\s+/g, "-");
+
+        const btn = document.createElement("button");
+        btn.className = "tab-btn" + (index === 0 ? " active" : "");
+        btn.textContent = modelName;
+        btn.dataset.target = tabId;
+        btn.addEventListener("click", () => activateTab(tabId));
+        tabsEl.appendChild(btn);
+
+        const section = document.createElement("section");
+        section.id = tabId;
+        section.className = "tab-content" + (index === 0 ? " active" : "");
+
+        const links = document.createElement("div");
+        links.className = "scenario-links";
+        modelData.scenarios.forEach((s) => {
+          const a = document.createElement("a");
+          a.href = `#${tabId}-${s.id}`;
+          a.textContent = s.name;
+          links.appendChild(a);
+        });
+
+        const table = document.createElement("table");
+        table.innerHTML = `
+          <thead>
+            <tr>
+              <th>Scenario</th>
+              <th>Accuracy</th>
+              <th>Precision</th>
+              <th>Recall</th>
+              <th>Latency (ms)</th>
+              <th>Result Link</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${modelData.scenarios.map((s) => `
+              <tr>
+                <td>${s.name}</td>
+                <td><span class="badge ${scoreClass(s.accuracy)}">${(s.accuracy * 100).toFixed(1)}%</span></td>
+                <td>${(s.precision * 100).toFixed(1)}%</td>
+                <td>${(s.recall * 100).toFixed(1)}%</td>
+                <td>${s.latencyMs}</td>
+                <td><a href="${s.link}" target="_blank" rel="noopener noreferrer">Open result</a></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        `;
+
+        const chartGrid = document.createElement("div");
+        chartGrid.className = "chart-grid";
+
+        chartGrid.innerHTML = `
+          <div class="card"><h3>Accuracy by Scenario</h3><canvas id="${tabId}-accuracy"></canvas></div>
+          <div class="card"><h3>Latency by Scenario</h3><canvas id="${tabId}-latency"></canvas></div>
+        `;
+
+        const scenarioBlocks = document.createElement("div");
+        modelData.scenarios.forEach((s) => {
+          const block = document.createElement("div");
+          block.className = "scenario-block";
+          block.id = `${tabId}-${s.id}`;
+          block.innerHTML = `
+            <h4>${s.name}</h4>
+            <a class="result-link" href="${s.link}" target="_blank" rel="noopener noreferrer">Scenario result link</a>
+            <div class="chart-grid">
+              <div class="card"><h3>Metrics Radar</h3><canvas id="${tabId}-${s.id}-radar"></canvas></div>
+              <div class="card"><h3>Metric Breakdown</h3><canvas id="${tabId}-${s.id}-bar"></canvas></div>
+            </div>
+          `;
+          scenarioBlocks.appendChild(block);
+        });
+
+        section.appendChild(links);
+        section.appendChild(table);
+        section.appendChild(chartGrid);
+        section.appendChild(scenarioBlocks);
+        tabContentsEl.appendChild(section);
+      });
+    }
+
+    function activateTab(tabId) {
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.target === tabId);
+      });
+      document.querySelectorAll(".tab-content").forEach((section) => {
+        section.classList.toggle("active", section.id === tabId);
+      });
+    }
+
+    function renderCharts() {
+      Object.entries(data).forEach(([modelName, modelData]) => {
+        const tabId = modelName.toLowerCase().replace(/\s+/g, "-");
+        const labels = modelData.scenarios.map((s) => s.name);
+
+        new Chart(document.getElementById(`${tabId}-accuracy`), {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [{
+              label: "Accuracy (%)",
+              data: modelData.scenarios.map((s) => (s.accuracy * 100).toFixed(2)),
+              backgroundColor: ["#60a5fa", "#3b82f6", "#1d4ed8"]
+            }]
+          },
+          options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
+        });
+
+        new Chart(document.getElementById(`${tabId}-latency`), {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              label: "Latency (ms)",
+              data: modelData.scenarios.map((s) => s.latencyMs),
+              borderColor: "#f59e0b",
+              backgroundColor: "rgba(245, 158, 11, 0.2)",
+              tension: 0.3,
+              fill: true
+            }]
+          },
+          options: { responsive: true, scales: { y: { beginAtZero: true } } }
+        });
+
+        modelData.scenarios.forEach((s) => {
+          const radarId = `${tabId}-${s.id}-radar`;
+          const barId = `${tabId}-${s.id}-bar`;
+
+          new Chart(document.getElementById(radarId), {
+            type: "radar",
+            data: {
+              labels: ["Accuracy", "Precision", "Recall", "Speed Score"],
+              datasets: [{
+                label: `${modelName} ${s.id}`,
+                data: [s.accuracy * 100, s.precision * 100, s.recall * 100, Math.max(0, 100 - s.latencyMs / 2)],
+                backgroundColor: "rgba(37, 99, 235, 0.2)",
+                borderColor: "#2563eb"
+              }]
+            },
+            options: { responsive: true, scales: { r: { beginAtZero: true, max: 100 } } }
+          });
+
+          new Chart(document.getElementById(barId), {
+            type: "bar",
+            data: {
+              labels: ["Accuracy", "Precision", "Recall"],
+              datasets: [{
+                label: "Score (%)",
+                data: [s.accuracy * 100, s.precision * 100, s.recall * 100],
+                backgroundColor: ["#22c55e", "#0ea5e9", "#8b5cf6"]
+              }]
+            },
+            options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
+          });
+        });
+      });
+    }
+
+    buildDashboard();
+    renderCharts();
+  </script>
+</body>
+</html>
