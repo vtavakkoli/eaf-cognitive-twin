@@ -73,7 +73,7 @@ Benchmark metrics, reports, and future research extensions
 - `safe_ppo_agentic_hybrid_variants` *(if available in the repository)*
 
 ## Proposed method
-One proposed method in this benchmark is **Safe PPO-Agentic MPC**, which combines policy-gradient learning with model-based safety correction and rule-based tap gating. PPO provides adaptive control under nonlinear furnace dynamics, while MPC-style local lookahead corrects unsafe or inefficient actions before execution. A final safety filter enforces operational constraints.
+One proposed method in this benchmark is **Safe PPO-Agentic TD3 BC**, which combines policy-gradient learning with model-based safety correction and rule-based tap gating. PPO provides adaptive control under nonlinear furnace dynamics, while TD3 and BC local lookahead corrects unsafe or inefficient actions before execution. A final safety filter enforces operational constraints.
 
 ## Reproducible commands
 Training:
