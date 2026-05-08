@@ -1,10 +1,63 @@
 # EAF Cognitive Twin
 
-EAF Cognitive Twin benchmark for industrial control and agentic AI policies.
+EAF Cognitive Twin is a **multi-fidelity digital-twin benchmark** for electric arc furnace (EAF) steelmaking, designed for reproducible evaluation of industrial control and agentic AI policies under shared simulation conditions.
 
-## Benchmark simulator (Model C)
-All policies are evaluated on the same enhanced hybrid first-principles simulator, Model C:
+## Digital Twin Model Hierarchy
+
+This repository contains three EAF simulator variants with increasing realism and process fidelity.
+
+1. **Model A – Empirical / baseline model**
+   - **File:** `src/eaf_twin/models/empirical.py`
+   - **Class/name:** `EmpiricalModel` / `Model_A_empirical`
+   - **Purpose:** lightweight reference model for fast sanity checks, simple experiments, and baseline comparisons.
+   - **Interpretation:** Model A is useful for reproducibility and quick testing, but it does not represent the full thermo-metallurgical furnace dynamics.
+
+2. **Model B – First-principles model**
+   - **File:** `src/eaf_twin/models/first_principles.py`
+   - **Class/name:** `FirstPrinciplesModel` / `Model_B_first_principles`
+   - **Purpose:** physics-based EAF simulator using energy, mass, heat-transfer, melting, slag, off-gas, chemical-energy, and tapping-related dynamics.
+   - **Interpretation:** Model B is more interpretable and physically grounded than Model A.
+
+3. **Model C – Enhanced hybrid digital twin**
+   - **File:** `src/eaf_twin/models/first_principles.py`
+   - **Created by:** `FirstPrinciplesModel(enhanced=True)`
+   - **Runtime name:** `Model_C_enhanced_hybrid`
+   - **Purpose:** most realistic benchmark model in this repository.
+   - **Interpretation:** Model C extends the first-principles formulation with enhanced hybrid behaviour, richer process dynamics, improved phase/melting behaviour, chemical-energy interactions, foamy-slag/arc-efficiency effects, tapping logic, operational constraints, and sensor noise.
+   - **Benchmark guidance:** all agentic control and policy benchmark results should use Model C unless a specific ablation compares A/B/C.
+   - **Research role:** Model C is the preferred research simulator for future EAF digital-twin studies, safe RL, agentic AI control, policy benchmarking, and reproducible comparison of industrial control strategies.
+
+| Model | Implementation | Fidelity | Main Use | Recommended For |
+|---|---|---|---|---|
+| Model A | `empirical.py` | Low fidelity | Fast baseline | Sanity checks and quick tests |
+| Model B | `first_principles.py` | Medium/high fidelity | Physics-based simulation | Interpretable ablations and physics validation |
+| Model C | `first_principles.py` with `enhanced=True` | Highest fidelity in this repository | Enhanced hybrid digital twin | Main benchmark and future EAF research |
+
+## Benchmark Simulator: Model C Enhanced Hybrid Digital Twin
+
+The benchmark intentionally evaluates policies on one common simulator, **Model C**, to ensure fair comparison across methods under identical closed-loop conditions. In the agentic benchmark, Model C is selected because it provides a more realistic closed-loop environment than Model A and Model B while remaining suitable for reproducible benchmarking and controlled analysis.
+
 `Model_C_enhanced_hybrid = FirstPrinciplesModel(enhanced=True)`.
+
+### Why Model C is important for later research
+
+- It provides a reusable EAF digital-twin environment for future safe RL and agentic AI research.
+- It enables controlled comparison of rule-based, MPC, RL, imitation-learning, and hybrid SafeAgent policies.
+- It supports reproducible benchmarking through common scenarios, seeds, metrics, and reports.
+- It can be extended later with plant calibration data, uncertainty estimation, online adaptation, and human-in-the-loop operator validation.
+- It should be described as a research-grade simulator, not as a certified plant controller.
+
+```text
+Industrial EAF process assumptions
+        ↓
+Model A / Model B / Model C simulators
+        ↓
+Scenario generation and controlled episodes
+        ↓
+Baseline, MPC, RL, BC, and SafeAgent policies
+        ↓
+Benchmark metrics, reports, and future research extensions
+```
 
 ## Policies compared
 - `baseline_schedule`
@@ -15,10 +68,12 @@ All policies are evaluated on the same enhanced hybrid first-principles simulato
 - `dqn`
 - `ppo`
 - `behavior_cloning`
-- `safe_ppo_agentic_mpc` (proposed)
+- `sac_td3_inspired_heuristics` *(if available in the repository)*
+- `safe_ppo_agentic_mpc`
+- `safe_ppo_agentic_hybrid_variants` *(if available in the repository)*
 
 ## Proposed method
-The proposed **Safe PPO-Agentic MPC** controller combines policy-gradient learning with model-based safety correction and rule-based tap gating. PPO provides adaptive control under nonlinear furnace dynamics, while MPC-style local lookahead corrects unsafe or inefficient actions before execution. A final safety filter enforces operational constraints.
+One proposed method in this benchmark is **Safe PPO-Agentic MPC**, which combines policy-gradient learning with model-based safety correction and rule-based tap gating. PPO provides adaptive control under nonlinear furnace dynamics, while MPC-style local lookahead corrects unsafe or inefficient actions before execution. A final safety filter enforces operational constraints.
 
 ## Reproducible commands
 Training:
