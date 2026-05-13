@@ -145,3 +145,49 @@ python -m agents.runners.run_agent \
   --include-rl-baselines \
   --report-format html,csv,md
 ```
+
+## License and Citation
+
+This repository is currently released for **academic review, transparency, and reproducibility before formal publication**.
+
+The associated paper is:
+
+**Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking:  
+A Multi-Policy Digital Twin Benchmark**
+
+Authors:
+
+- **Vahid Tavakkoli**  
+  Institute for Smart System Technologies  
+  Universitaet Klagenfurt  
+  Klagenfurt, Austria  
+  vahid.tavakkoli@aau.at
+
+- **Kabeh Mohsenzadegan**  
+  Institute for Smart System Technologies  
+  Universitaet Klagenfurt  
+  Klagenfurt, Austria  
+  kabeh.mohsenzadegan@aau.at
+
+- **Kyandoghere Kyamakya**  
+  Universitaet Klagenfurt / Institute for Smart Systems Technologies, Austria  
+  and Faculte Polytechnique, Universite de Kinshasa, DR-Congo  
+  kyandoghere.kyamakya@aau.at
+
+Repository:
+
+https://github.com/vtavakkoli/eaf-cognitive-twin
+
+### Citation
+
+If you use this repository, benchmark, methodology, results, figures, tables, or code, please cite the associated paper. Before formal publication, cite this repository as:
+
+```bibtex
+@misc{tavakkoli2026eafcognitivetwin,
+  author       = {Vahid Tavakkoli and Kabeh Mohsenzadegan and Kyandoghere Kyamakya},
+  title        = {Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking: A Multi-Policy Digital Twin Benchmark},
+  year         = {2026},
+  howpublished = {GitHub repository},
+  url          = {https://github.com/vtavakkoli/eaf-cognitive-twin}
+}
+```

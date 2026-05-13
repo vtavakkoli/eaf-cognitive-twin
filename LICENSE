@@ -1,21 +1,58 @@
-MIT License
+Temporary Research License – All Rights Reserved Until Publication
 
-Copyright (c) 2026
+Copyright (c) 2026 Vahid Tavakkoli, Kabeh Mohsenzadegan, and Kyandoghere Kyamakya.
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This repository is made publicly available for transparency, academic review,
+and reproducibility evaluation before formal publication of the associated paper:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+"Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking:
+A Multi-Policy Digital Twin Benchmark"
+
+Authors:
+Vahid Tavakkoli
+Institute for Smart System Technologies
+Universitaet Klagenfurt
+Klagenfurt, Austria
+vahid.tavakkoli@aau.at
+
+Kabeh Mohsenzadegan
+Institute for Smart System Technologies
+Universitaet Klagenfurt
+Klagenfurt, Austria
+kabeh.mohsenzadegan@aau.at
+
+Kyandoghere Kyamakya
+Universitaet Klagenfurt / Institute for Smart Systems Technologies, Austria
+and Faculte Polytechnique, Universite de Kinshasa, DR-Congo
+kyandoghere.kyamakya@aau.at
+
+Repository:
+https://github.com/vtavakkoli/eaf-cognitive-twin
+
+Permission is granted to read, inspect, clone, and run the code for
+non-commercial academic review, reproducibility evaluation, and research
+verification purposes only.
+
+You may not copy, redistribute, modify, publish, sublicense, sell, or reuse
+substantial parts of this code, data, methodology, experiments, figures,
+tables, or results in another repository, paper, product, or project without
+prior written permission from the authors.
+
+If you use this repository, its methodology, results, code, or benchmark design
+for academic or research purposes, you must cite the associated paper. Before
+formal publication, cite this repository as:
+
+Vahid Tavakkoli, Kabeh Mohsenzadegan, and Kyandoghere Kyamakya,
+"Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking:
+A Multi-Policy Digital Twin Benchmark", GitHub repository, 2026.
+Available at: https://github.com/vtavakkoli/eaf-cognitive-twin
+
+After the associated paper is formally published, this repository may be
+relicensed under an open-source license such as MIT or Apache License 2.0.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, OR ACCURACY OF RESULTS.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.
