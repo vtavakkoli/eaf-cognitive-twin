@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, benchmark, methodology, results, or code, please cite the associated paper or this repository."
+title: "Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking: A Multi-Policy Digital Twin Benchmark"
+authors:
+  - family-names: "Tavakkoli"
+    given-names: "Vahid"
+    affiliation: "Institute for Smart System Technologies, Universitaet Klagenfurt"
+    email: "vahid.tavakkoli@aau.at"
+  - family-names: "Mohsenzadegan"
+    given-names: "Kabeh"
+    affiliation: "Institute for Smart System Technologies, Universitaet Klagenfurt"
+    email: "kabeh.mohsenzadegan@aau.at"
+  - family-names: "Kyamakya"
+    given-names: "Kyandoghere"
+    affiliation: "Universitaet Klagenfurt / Institute for Smart Systems Technologies, Austria; Faculte Polytechnique, Universite de Kinshasa, DR-Congo"
+    email: "kyandoghere.kyamakya@aau.at"
+year: 2026
+repository-code: "https://github.com/vtavakkoli/eaf-cognitive-twin"
+license: "Proprietary - all rights reserved until publication"
+abstract: "Electric arc furnace steelmaking is a nonlinear thermo-metallurgical batch process requiring coordinated control of electrical power, oxygen, natural gas, melting progress, slag behavior, and tapping readiness under safety constraints. This repository provides the benchmark implementation for a safe hybrid agentic control framework using an enhanced hybrid Model C simulator and fourteen control policies."
