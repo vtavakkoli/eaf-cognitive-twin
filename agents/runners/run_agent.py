@@ -14,6 +14,7 @@ from agents.base import BasePolicy
 from agents.policies.baseline_schedule import IndustrialBaselineSchedulePolicy
 from agents.policies.behavior_cloning_policy import BehaviorCloningPolicy
 from agents.policies.dqn_policy import DQNPolicy
+from agents.policies.goal_conditioned_jepa_ppo import GoalConditionedJEPAPPOPolicy
 from agents.policies.mpc_policy import MPCPolicy
 from agents.policies.ppo_policy import PPOPolicy
 from agents.policies.q_learning_policy import QLearningPolicy
@@ -36,6 +37,7 @@ POLICY_LABELS = {
     "q_learning": "Q-Learning",
     "dqn": "DQN",
     "ppo": "PPO",
+    "goal_conditioned_jepa_ppo": "Goal-Conditioned JEPA-PPO",
     "safe_ppo_agentic_mpc": "PPO-SafeAgent-MPC",
     "safe_ppo_agentic_sac": "PPO-SafeAgent-SAC",
     "safe_ppo_agentic_td3": "PPO-SafeAgent-TD3",
@@ -387,6 +389,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             "q_learning": (args.training_dir / "q_learning" / "q_table.json", QLearningPolicy.load),
             "dqn": (args.training_dir / "dqn" / "best_policy.pt", DQNPolicy.load),
             "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
+            "goal_conditioned_jepa_ppo": (args.training_dir / "goal_conditioned_jepa_ppo" / "best_policy.pt", GoalConditionedJEPAPPOPolicy.load),
             "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
             "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_agentic_mpc_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
             "safe_ppo_agentic_sac": (args.training_dir / "safe_ppo_agentic_sac" / "best_safe_ppo_agentic_sac_policy.pt", SafePPOAgenticSACPolicy.load),

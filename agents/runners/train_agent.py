@@ -17,6 +17,7 @@ from eaf_twin.config.loader import load_config
 from agents.controller import EAFController
 from agents.policies.behavior_cloning_policy import BehaviorCloningPolicy
 from agents.policies.dqn_policy import DQNPolicy
+from agents.policies.goal_conditioned_jepa_ppo import GoalConditionedJEPAPPOPolicy, predictor_input
 from agents.policies.heuristic import HeuristicParams
 from agents.policies.ppo_policy import PPOPolicy
 from agents.policies.q_learning_policy import QLearningPolicy
@@ -269,6 +270,138 @@ def train_ppo(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: i
     pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
 
 
+def train_goal_conditioned_jepa_ppo(
+    base_cfg,
+    episodes: int,
+    seed: int,
+    output_dir: Path,
+    max_steps: int,
+    learning_rate: float = 0.0001,
+    jepa_learning_rate: float = 0.0003,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+    clip_epsilon: float = 0.15,
+    entropy_coef: float = 0.02,
+    value_coef: float = 0.5,
+    rollout_steps: int = 128,
+    epochs: int = 4,
+    batch_size: int = 32,
+) -> None:
+    """Train the proposed set-point-aware JEPA-PPO controller.
+
+    PPO optimizes the action policy, while the auxiliary JEPA module predicts the
+    next normalized furnace-state embedding from current state, previous action,
+    operation set-points, goal error, and phase embedding.
+    """
+    rng = np.random.default_rng(seed)
+    policy = GoalConditionedJEPAPPOPolicy()
+    best = -1e18
+    logs = []
+    reward_ma: deque[float] = deque(maxlen=20)
+    recent_success: deque[int] = deque(maxlen=40)
+    for ep in range(episodes):
+        ctrl = _controller(base_cfg, "base_case", seed + ep)
+        obs = ctrl.reset()
+        policy.reset()
+        traj = []
+        total = 0.0
+        entropy_coef_ep = max(0.001, entropy_coef * (0.995 ** ep))
+        for _ in range(max_steps):
+            prev_action = dict(policy.previous_action) if policy.previous_action else None
+            x = policy.feature_vector(obs, prev_action)
+            pred_in = predictor_input(obs, prev_action)
+            z = policy.latent_state(obs)
+            logits = policy.actor_w @ x
+            p = _softmax(logits)
+            a = int(rng.choice(len(ACTION_NAMES), p=p))
+            old_logp = float(np.log(max(p[a], 1e-12)))
+            action = safe_discrete_action(ACTION_NAMES[a], obs)
+            res = ctrl.step(action)
+            executed_action = dict(res.info["safe_action"])
+            executed_idx = _action_index_from_action(obs, executed_action)
+            next_z = policy.latent_state(res.observation)
+            v = float(policy.value_w @ x)
+            traj.append((x, pred_in, z, next_z, executed_idx, old_logp, float(np.clip(res.reward, -5.0, 5.0)), float(res.done), v))
+            policy.remember_action(executed_action)
+            obs = res.observation
+            total += res.reward
+            if res.done or len(traj) >= rollout_steps:
+                break
+
+        jepa_losses = []
+        for _, pred_in, z, next_z, *_ in traj:
+            pred = np.clip(z + policy.predictor_w @ pred_in, -2.0, 2.0)
+            err = pred - next_z
+            jepa_losses.append(float(np.mean(err**2)))
+            policy.predictor_w -= jepa_learning_rate * np.outer(err, pred_in)
+            policy.predictor_w = np.clip(policy.predictor_w, -2.0, 2.0)
+
+        if total > best:
+            best = total
+            output_dir.mkdir(parents=True, exist_ok=True)
+            policy.save(output_dir / "best_policy.pt")
+
+        adv, ret = [], []
+        gae = 0.0
+        next_v = 0.0
+        for x, _, _, _, a, old_logp, r, done, v in reversed(traj):
+            delta = r + gamma * next_v * (1.0 - done) - v
+            gae = delta + gamma * gae_lambda * (1.0 - done) * gae
+            adv.insert(0, gae)
+            ret.insert(0, gae + v)
+            next_v = v
+        adv = np.asarray(adv, dtype=float)
+        ret = np.asarray(ret, dtype=float)
+        if len(ret) > 1:
+            ret = (ret - ret.mean()) / (ret.std() + 1e-8)
+        if len(adv) > 1:
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+
+        for _ in range(epochs):
+            if not traj:
+                break
+            idx = rng.permutation(len(traj))
+            for start in range(0, len(idx), batch_size):
+                for j in idx[start : start + batch_size]:
+                    x, _, _, _, a, old_logp, _, _, _ = traj[j]
+                    probs = _softmax(policy.actor_w @ x)
+                    logp = float(np.log(max(probs[a], 1e-12)))
+                    ratio = np.exp(np.clip(logp - old_logp, -5.0, 5.0))
+                    s1 = ratio * adv[j]
+                    s2 = np.clip(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv[j]
+                    pg_scale = -min(s1, s2)
+                    onehot = np.zeros(len(ACTION_NAMES)); onehot[a] = 1.0
+                    grad_logits = (probs - onehot) * pg_scale - entropy_coef_ep * (-np.log(np.maximum(probs, 1e-12)) - 1.0)
+                    policy.actor_w -= learning_rate * np.outer(grad_logits, x)
+                    vpred = float(policy.value_w @ x)
+                    policy.value_w -= learning_rate * value_coef * 2.0 * (vpred - ret[j]) * x
+                    policy.actor_w = np.clip(policy.actor_w, -10.0, 10.0)
+                    policy.value_w = np.clip(policy.value_w, -10.0, 10.0)
+
+        success = int(_episode_success(obs, ctrl.config))
+        recent_success.append(success)
+        reward_ma.append(total)
+        logs.append({
+            "episode": ep,
+            "reward": total,
+            "success": success,
+            "tap_success_rate": success,
+            "final_temperature_c": float(obs.get("bath_temp_c", 0.0)),
+            "cum_tapped_kg": float(obs.get("cum_tapped_kg", 0.0)),
+            "energy_per_ton": (float(obs.get("cum_electric_mwh", 0.0)) * 1000.0 / max(1e-9, float(obs.get("cum_tapped_kg", 0.0)) / 1000.0)) if float(obs.get("cum_tapped_kg", 0.0)) > 0 else np.nan,
+            "failure_reason": _failure_reason(obs),
+            "moving_avg_reward": float(np.mean(reward_ma)),
+            "jepa_prediction_loss": float(np.mean(jepa_losses)) if jepa_losses else np.nan,
+        })
+        if _should_early_stop(recent_success):
+            break
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not (output_dir / "best_policy.pt").exists():
+        policy.save(output_dir / "best_policy.pt")
+    pd.DataFrame(logs).to_csv(output_dir / "training_curve.csv", index=False)
+
+
 def train_behavior_cloning(base_cfg, episodes: int, seed: int, output_dir: Path, max_steps: int) -> None:
     from agents.policies.mpc_policy import MPCPolicy
 
@@ -365,7 +498,7 @@ def _collect_training_report(base_dir: Path, trained: list[str]) -> None:
         )
 
     rows = []
-    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_safe_ppo_agentic_mpc_policy.pt", "safe_ppo_agentic_sac": "best_safe_ppo_agentic_sac_policy.pt", "safe_ppo_agentic_td3": "best_safe_ppo_agentic_td3_policy.pt", "safe_ppo_agentic_bc": "best_safe_ppo_agentic_bc_policy.pt", "safe_ppo_agentic_td3_bc": "best_safe_ppo_agentic_td3_bc_policy.pt"}
+    expected = {"trainable_adaptive_controller": "best_policy.json", "behavior_cloning": "policy.json", "q_learning": "q_table.json", "dqn": "best_policy.pt", "ppo": "best_policy.pt", "goal_conditioned_jepa_ppo": "best_policy.pt", "safe_ppo_agentic_mpc": "best_safe_ppo_agentic_mpc_policy.pt", "safe_ppo_agentic_sac": "best_safe_ppo_agentic_sac_policy.pt", "safe_ppo_agentic_td3": "best_safe_ppo_agentic_td3_policy.pt", "safe_ppo_agentic_bc": "best_safe_ppo_agentic_bc_policy.pt", "safe_ppo_agentic_td3_bc": "best_safe_ppo_agentic_td3_bc_policy.pt"}
     chart_blocks: list[str] = []
     for m, f in expected.items():
         p = base_dir / m / f
@@ -403,7 +536,7 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "safe_ppo_agentic_mpc", "safe_ppo_agentic_sac", "safe_ppo_agentic_td3", "safe_ppo_agentic_bc", "safe_ppo_agentic_td3_bc", "behavior_cloning", "all"], default="heuristic")
+    parser.add_argument("--algorithm", choices=["heuristic", "q_learning", "dqn", "ppo", "goal_conditioned_jepa_ppo", "safe_ppo_agentic_mpc", "safe_ppo_agentic_sac", "safe_ppo_agentic_td3", "safe_ppo_agentic_bc", "safe_ppo_agentic_td3_bc", "behavior_cloning", "all"], default="heuristic")
     parser.add_argument("--max-steps", type=int, default=610)
     parser.add_argument("--fast-dev-run", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -425,13 +558,14 @@ def main() -> None:
         "q_learning": lambda: train_q_learning(base_cfg, episodes, args.seed, args.output_dir / "q_learning", args.max_steps),
         "dqn": lambda: train_dqn(base_cfg, episodes, args.seed, args.output_dir / "dqn", args.max_steps),
         "ppo": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "ppo", args.max_steps, safe_hybrid=False, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
+        "goal_conditioned_jepa_ppo": lambda: train_goal_conditioned_jepa_ppo(base_cfg, episodes, args.seed, args.output_dir / "goal_conditioned_jepa_ppo", args.max_steps, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
         "safe_ppo_agentic_mpc": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_mpc", args.max_steps, safe_hybrid=True, hybrid_name="safe_ppo_agentic_mpc", learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
         "safe_ppo_agentic_sac": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_sac", args.max_steps, safe_hybrid=True, hybrid_name="safe_ppo_agentic_sac", learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
         "safe_ppo_agentic_td3": lambda: train_ppo(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_td3", args.max_steps, safe_hybrid=True, hybrid_name="safe_ppo_agentic_td3", learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
         "safe_ppo_agentic_bc": lambda: train_safe_ppo_agentic_bc(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_bc", args.max_steps, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
         "safe_ppo_agentic_td3_bc": lambda: train_safe_ppo_agentic_bc(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_td3_bc", args.max_steps, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size, hybrid_name="safe_ppo_agentic_td3_bc"),
     }
-    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","safe_ppo_agentic_mpc","safe_ppo_agentic_sac","safe_ppo_agentic_td3","safe_ppo_agentic_bc","safe_ppo_agentic_td3_bc"]
+    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","goal_conditioned_jepa_ppo","safe_ppo_agentic_mpc","safe_ppo_agentic_sac","safe_ppo_agentic_td3","safe_ppo_agentic_bc","safe_ppo_agentic_td3_bc"]
     if args.algorithm == "heuristic":
         train_map["trainable_adaptive_controller"](); trained=["trainable_adaptive_controller"]
     elif args.algorithm == "all":
