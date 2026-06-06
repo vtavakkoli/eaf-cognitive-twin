@@ -59,6 +59,22 @@ Baseline, MPC, RL, BC, and SafeAgent policies
 Benchmark metrics, reports, and future research extensions
 ```
 
+The goal-conditioned JEPA-PPO variant now uses **TD3+BC as the goal setter**:
+
+```text
+current multimodal EAF state
+        ↓
+TD3 smooth target + Behavior Cloning expert prior
+        ↓
+short-horizon TD3BC goal embedding
+        ↓
+JEPA latent next-state predictor
+        ↓
+PPO policy head + simulator safety filter
+        ↓
+safe EAF control action
+```
+
 ## Policies compared
 - `baseline_schedule`
 - `rule_based`
@@ -67,6 +83,7 @@ Benchmark metrics, reports, and future research extensions
 - `q_learning`
 - `dqn`
 - `ppo`
+- `goal_conditioned_jepa_ppo` *(Goal-Conditioned JEPA-PPO-TD3BC)*
 - `behavior_cloning`
 - `sac_td3_inspired_heuristics` *(if available in the repository)*
 - `safe_ppo_agentic_mpc`
@@ -74,6 +91,8 @@ Benchmark metrics, reports, and future research extensions
 
 ## Proposed method
 One proposed method in this benchmark is **Safe PPO-Agentic TD3 BC**, which combines policy-gradient learning with model-based safety correction and rule-based tap gating. PPO provides adaptive control under nonlinear furnace dynamics, while TD3 and BC local lookahead corrects unsafe or inefficient actions before execution. A final safety filter enforces operational constraints.
+
+The **Goal-Conditioned JEPA-PPO-TD3BC** model reuses this strongest prior differently: TD3+BC does not directly replace PPO. Instead, it produces the intermediate goal embedding used by the JEPA predictor and PPO policy. This keeps PPO as the final adaptive policy while letting TD3+BC define realistic short-horizon operating targets.
 
 ## Reproducible commands
 Training:
@@ -98,6 +117,13 @@ python -m agents.runners.train_agent \
   --episodes 1000 \
   --seed 7 \
   --output-dir results/agent_training/ppo
+
+python -m agents.runners.train_agent \
+  --config configs/base_case.json \
+  --algorithm goal_conditioned_jepa_ppo \
+  --episodes 1000 \
+  --seed 7 \
+  --output-dir results/agent_training/goal_conditioned_jepa_ppo
 
 python -m agents.runners.train_agent \
   --config configs/base_case.json \

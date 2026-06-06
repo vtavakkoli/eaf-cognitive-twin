@@ -6,17 +6,20 @@ from typing import Iterable
 import numpy as np
 
 from agents.base import BasePolicy
+from agents.policies.behavior_cloning_policy import BehaviorCloningPolicy
 from agents.policies.rl_common import ACTION_NAMES, safe_discrete_action, normalized_obs_vec
+from agents.policies.td3_inspired_policy import TD3InspiredPolicy
 from agents.types import ActionDict, ObservationDict
 
 
 ACTION_VECTOR_DIM = 6
 SETPOINT_VECTOR_DIM = 6
+TD3BC_GOAL_VECTOR_DIM = 6
 GOAL_ERROR_VECTOR_DIM = 6
 PHASE_VECTOR_DIM = 5
 STATE_VECTOR_DIM = 13
-PREDICTOR_INPUT_DIM = STATE_VECTOR_DIM + ACTION_VECTOR_DIM + SETPOINT_VECTOR_DIM + GOAL_ERROR_VECTOR_DIM + PHASE_VECTOR_DIM + 1
-FEATURE_DIM = STATE_VECTOR_DIM + ACTION_VECTOR_DIM + SETPOINT_VECTOR_DIM + GOAL_ERROR_VECTOR_DIM + PHASE_VECTOR_DIM + STATE_VECTOR_DIM + 1
+PREDICTOR_INPUT_DIM = STATE_VECTOR_DIM + ACTION_VECTOR_DIM + SETPOINT_VECTOR_DIM + TD3BC_GOAL_VECTOR_DIM + GOAL_ERROR_VECTOR_DIM + PHASE_VECTOR_DIM + 1
+FEATURE_DIM = STATE_VECTOR_DIM + ACTION_VECTOR_DIM + SETPOINT_VECTOR_DIM + TD3BC_GOAL_VECTOR_DIM + GOAL_ERROR_VECTOR_DIM + PHASE_VECTOR_DIM + STATE_VECTOR_DIM + 1
 
 
 def _clip(value: float, lo: float = -1.5, hi: float = 1.5) -> float:
@@ -43,6 +46,47 @@ def action_to_vec(action: ActionDict | None) -> np.ndarray:
         ],
         dtype=float,
     )
+
+
+def td3bc_goal_action(
+    obs: ObservationDict,
+    bc_policy: BehaviorCloningPolicy | None = None,
+    td3_policy: TD3InspiredPolicy | None = None,
+) -> ActionDict:
+    """Create an intermediate goal proposal from TD3 and behavior cloning.
+
+    The goal is not the final executed action. It is a short-horizon operating
+    target used by the JEPA predictor and PPO actor. TD3 gives smooth continuous
+    process targets, while BC anchors the target toward expert-like operation.
+    """
+    bc = bc_policy or BehaviorCloningPolicy()
+    td3 = td3_policy or TD3InspiredPolicy()
+    bc_action = bc.act(obs)
+    td3_action = td3.act(obs)
+
+    blended = {
+        "power_mw": 0.40 * float(bc_action.get("power_mw", 0.0)) + 0.60 * float(td3_action.get("power_mw", 0.0)),
+        "oxygen_nm3_min": 0.40 * float(bc_action.get("oxygen_nm3_min", 0.0)) + 0.60 * float(td3_action.get("oxygen_nm3_min", 0.0)),
+        "ng_nm3_min": 0.40 * float(bc_action.get("ng_nm3_min", 0.0)) + 0.60 * float(td3_action.get("ng_nm3_min", 0.0)),
+        "carbon_kg_min": 0.40 * float(bc_action.get("carbon_kg_min", 0.0)) + 0.60 * float(td3_action.get("carbon_kg_min", 0.0)),
+        "flux_kg_min": 0.40 * float(bc_action.get("flux_kg_min", 0.0)) + 0.60 * float(td3_action.get("flux_kg_min", 0.0)),
+        "tap_command": bool(bc_action.get("tap_command", False) and td3_action.get("tap_command", False)),
+    }
+
+    if bool(obs.get("is_downtime", False)):
+        blended.update({"power_mw": 0.0, "oxygen_nm3_min": 0.0, "ng_nm3_min": 0.0, "carbon_kg_min": 0.0, "flux_kg_min": 0.0, "tap_command": False})
+    if not bool(obs.get("can_tap", False)):
+        blended["tap_command"] = False
+    return blended
+
+
+def td3bc_goal_vec(
+    obs: ObservationDict,
+    bc_policy: BehaviorCloningPolicy | None = None,
+    td3_policy: TD3InspiredPolicy | None = None,
+) -> np.ndarray:
+    """Encode the TD3+BC short-horizon goal proposal."""
+    return action_to_vec(td3bc_goal_action(obs, bc_policy=bc_policy, td3_policy=td3_policy))
 
 
 def setpoint_vec(obs: ObservationDict) -> np.ndarray:
@@ -119,12 +163,18 @@ def phase_vec(obs: ObservationDict) -> np.ndarray:
     return out
 
 
-def predictor_input(obs: ObservationDict, previous_action: ActionDict | None) -> np.ndarray:
+def predictor_input(
+    obs: ObservationDict,
+    previous_action: ActionDict | None,
+    bc_policy: BehaviorCloningPolicy | None = None,
+    td3_policy: TD3InspiredPolicy | None = None,
+) -> np.ndarray:
     return np.concatenate(
         [
             np.asarray(normalized_obs_vec(obs), dtype=float),
             action_to_vec(previous_action),
             setpoint_vec(obs),
+            td3bc_goal_vec(obs, bc_policy=bc_policy, td3_policy=td3_policy),
             goal_error_vec(obs),
             phase_vec(obs),
             np.ones(1, dtype=float),
@@ -133,13 +183,16 @@ def predictor_input(obs: ObservationDict, previous_action: ActionDict | None) ->
 
 
 class GoalConditionedJEPAPPOPolicy(BasePolicy):
-    """Goal-conditioned JEPA-PPO controller.
+    """Goal-conditioned JEPA-PPO controller with TD3+BC goal setting.
 
     The policy adds three inputs that plain PPO does not explicitly model:
     1. previous multimodal action embedding,
     2. operation set-point/recipe embedding,
-    3. JEPA-style latent prediction of the next furnace state.
+    3. TD3+BC short-horizon goal proposal,
+    4. JEPA-style latent prediction of the next furnace state.
 
+    TD3+BC sets the intermediate operating goal because PPO-SafeAgent-TD3BC
+    and Behavior Cloning are the strongest prior controllers in this benchmark.
     PPO still chooses the discrete action. The auxiliary latent predictor is
     trained from observed transitions with a representation prediction loss.
     """
@@ -151,10 +204,14 @@ class GoalConditionedJEPAPPOPolicy(BasePolicy):
         actor_w: np.ndarray | None = None,
         value_w: np.ndarray | None = None,
         predictor_w: np.ndarray | None = None,
+        bc_policy: BehaviorCloningPolicy | None = None,
+        td3_policy: TD3InspiredPolicy | None = None,
     ):
         self.actor_w = np.asarray(actor_w, dtype=float) if actor_w is not None else np.zeros((len(ACTION_NAMES), FEATURE_DIM), dtype=float)
         self.value_w = np.asarray(value_w, dtype=float) if value_w is not None else np.zeros(FEATURE_DIM, dtype=float)
         self.predictor_w = np.asarray(predictor_w, dtype=float) if predictor_w is not None else np.zeros((STATE_VECTOR_DIM, PREDICTOR_INPUT_DIM), dtype=float)
+        self.bc_policy = bc_policy or BehaviorCloningPolicy()
+        self.td3_policy = td3_policy or TD3InspiredPolicy()
         self.previous_action: ActionDict | None = None
         self.last_info: dict[str, object] = {}
 
@@ -167,7 +224,7 @@ class GoalConditionedJEPAPPOPolicy(BasePolicy):
     def predict_next_latent(self, obs: ObservationDict, previous_action: ActionDict | None = None) -> np.ndarray:
         prev = self.previous_action if previous_action is None else previous_action
         z = self.latent_state(obs)
-        m = predictor_input(obs, prev)
+        m = predictor_input(obs, prev, bc_policy=self.bc_policy, td3_policy=self.td3_policy)
         return np.clip(z + self.predictor_w @ m, -2.0, 2.0)
 
     def feature_vector(self, obs: ObservationDict, previous_action: ActionDict | None = None) -> np.ndarray:
@@ -175,10 +232,11 @@ class GoalConditionedJEPAPPOPolicy(BasePolicy):
         z = self.latent_state(obs)
         u = action_to_vec(prev)
         r = setpoint_vec(obs)
+        g = td3bc_goal_vec(obs, bc_policy=self.bc_policy, td3_policy=self.td3_policy)
         e = goal_error_vec(obs)
         p = phase_vec(obs)
         z_next_hat = self.predict_next_latent(obs, prev)
-        return np.concatenate([z, u, r, e, p, z_next_hat, np.ones(1, dtype=float)])
+        return np.concatenate([z, u, r, g, e, p, z_next_hat, np.ones(1, dtype=float)])
 
     def probs(self, obs: ObservationDict) -> np.ndarray:
         x = self.feature_vector(obs)
@@ -201,6 +259,7 @@ class GoalConditionedJEPAPPOPolicy(BasePolicy):
         action_idx = int(np.argmax(probs))
         action_name = ACTION_NAMES[action_idx]
         action = safe_discrete_action(action_name, observation)
+        td3bc_goal = td3bc_goal_action(observation, bc_policy=self.bc_policy, td3_policy=self.td3_policy)
         self.remember_action(action)
         self.last_info = {
             "selected_strategy": "goal_conditioned_jepa_ppo",
@@ -208,7 +267,10 @@ class GoalConditionedJEPAPPOPolicy(BasePolicy):
             "jepa_goal_error_norm": float(np.linalg.norm(goal_error_vec(observation))),
             "latent_prediction_norm": float(np.linalg.norm(self.predict_next_latent(observation))),
             "operation_setpoint_embedding": setpoint_vec(observation).round(4).tolist(),
-            "pipeline": "state_embedding+previous_action_embedding+setpoint_embedding+phase_embedding->jepa_predictor->ppo_policy",
+            "td3bc_goal_action": dict(td3bc_goal),
+            "td3bc_goal_embedding": td3bc_goal_vec(observation, bc_policy=self.bc_policy, td3_policy=self.td3_policy).round(4).tolist(),
+            "goal_source": "TD3 smooth target regularized by behavior-cloning expert prior",
+            "pipeline": "state_embedding+previous_action_embedding+setpoint_embedding+td3bc_goal_embedding+phase_embedding->jepa_predictor->ppo_policy",
         }
         return action
 
@@ -218,7 +280,8 @@ class GoalConditionedJEPAPPOPolicy(BasePolicy):
             np.savez(f, actor_w=self.actor_w, value_w=self.value_w, predictor_w=self.predictor_w)
 
     @classmethod
-    def load(cls, path: Path) -> "GoalConditionedJEPAPPOPolicy":
+    def load(cls, path: Path, bc_path: Path | None = None) -> "GoalConditionedJEPAPPOPolicy":
         load_path = path if path.exists() else Path(f"{path}.npz")
         ckpt = np.load(load_path)
-        return cls(actor_w=ckpt["actor_w"], value_w=ckpt["value_w"], predictor_w=ckpt["predictor_w"])
+        bc_policy = BehaviorCloningPolicy.load(bc_path) if bc_path is not None and bc_path.exists() else None
+        return cls(actor_w=ckpt["actor_w"], value_w=ckpt["value_w"], predictor_w=ckpt["predictor_w"], bc_policy=bc_policy)

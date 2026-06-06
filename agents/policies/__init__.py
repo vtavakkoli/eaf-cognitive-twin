@@ -1,6 +1,7 @@
 from agents.policies.baseline_schedule import IndustrialBaselineSchedulePolicy
 from agents.policies.behavior_cloning_policy import BehaviorCloningPolicy
 from agents.policies.dqn_policy import DQNPolicy
+from agents.policies.goal_conditioned_jepa_ppo import GoalConditionedJEPAPPOPolicy
 from agents.policies.heuristic import HeuristicParams, HeuristicPolicy
 from agents.policies.hybrid_policy import HybridPolicy
 from agents.policies.llm_policy import LLMPolicy
@@ -29,6 +30,7 @@ __all__ = [
     "QLearningPolicy",
     "DQNPolicy",
     "PPOPolicy",
+    "GoalConditionedJEPAPPOPolicy",
     "SafePPOAgenticMPCPolicy",
     "SafePPOAgenticSACPolicy",
     "SafePPOAgenticTD3Policy",

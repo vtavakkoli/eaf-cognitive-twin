@@ -7,7 +7,7 @@ from eaf_twin.config.defaults import default_config
 from agents.controller import EAFController
 from agents.policies.behavior_cloning_policy import BehaviorCloningPolicy
 from agents.policies.dqn_policy import DQNPolicy
-from agents.policies.goal_conditioned_jepa_ppo import GoalConditionedJEPAPPOPolicy, FEATURE_DIM
+from agents.policies.goal_conditioned_jepa_ppo import GoalConditionedJEPAPPOPolicy, FEATURE_DIM, TD3BC_GOAL_VECTOR_DIM, td3bc_goal_vec
 from agents.policies.ppo_policy import PPOPolicy
 from agents.policies.q_learning_policy import QLearningPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
@@ -40,3 +40,15 @@ def test_goal_conditioned_jepa_ppo_feature_shape():
     pol = GoalConditionedJEPAPPOPolicy()
     assert pol.feature_vector(obs).shape[0] == FEATURE_DIM
     assert pol.actor_w.shape[1] == FEATURE_DIM
+
+
+def test_goal_conditioned_jepa_ppo_uses_td3bc_goal_setting():
+    ctrl = EAFController(default_config(), enhanced_model=True)
+    obs = ctrl.reset()
+    pol = GoalConditionedJEPAPPOPolicy()
+    act = pol.act(obs)
+    assert REQUIRED.issubset(act.keys())
+    assert td3bc_goal_vec(obs).shape[0] == TD3BC_GOAL_VECTOR_DIM
+    assert "td3bc_goal_action" in pol.last_info
+    assert "td3bc_goal_embedding" in pol.last_info
+    assert "td3bc_goal_embedding" in pol.last_info["pipeline"]

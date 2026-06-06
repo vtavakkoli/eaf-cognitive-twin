@@ -293,8 +293,13 @@ def train_goal_conditioned_jepa_ppo(
     next normalized furnace-state embedding from current state, previous action,
     operation set-points, goal error, and phase embedding.
     """
+    bc_dir = output_dir.parent / "behavior_cloning"
+    if not (bc_dir / "policy.json").exists():
+        train_behavior_cloning(base_cfg, episodes, seed, bc_dir, max_steps)
+    bc_policy = BehaviorCloningPolicy.load(bc_dir / "policy.json")
+
     rng = np.random.default_rng(seed)
-    policy = GoalConditionedJEPAPPOPolicy()
+    policy = GoalConditionedJEPAPPOPolicy(bc_policy=bc_policy)
     best = -1e18
     logs = []
     reward_ma: deque[float] = deque(maxlen=20)
@@ -309,7 +314,7 @@ def train_goal_conditioned_jepa_ppo(
         for _ in range(max_steps):
             prev_action = dict(policy.previous_action) if policy.previous_action else None
             x = policy.feature_vector(obs, prev_action)
-            pred_in = predictor_input(obs, prev_action)
+            pred_in = predictor_input(obs, prev_action, bc_policy=bc_policy)
             z = policy.latent_state(obs)
             logits = policy.actor_w @ x
             p = _softmax(logits)

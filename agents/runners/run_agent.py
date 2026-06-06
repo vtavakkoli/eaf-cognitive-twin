@@ -37,7 +37,7 @@ POLICY_LABELS = {
     "q_learning": "Q-Learning",
     "dqn": "DQN",
     "ppo": "PPO",
-    "goal_conditioned_jepa_ppo": "Goal-Conditioned JEPA-PPO",
+    "goal_conditioned_jepa_ppo": "Goal-Conditioned JEPA-PPO-TD3BC",
     "safe_ppo_agentic_mpc": "PPO-SafeAgent-MPC",
     "safe_ppo_agentic_sac": "PPO-SafeAgent-SAC",
     "safe_ppo_agentic_td3": "PPO-SafeAgent-TD3",
@@ -389,7 +389,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             "q_learning": (args.training_dir / "q_learning" / "q_table.json", QLearningPolicy.load),
             "dqn": (args.training_dir / "dqn" / "best_policy.pt", DQNPolicy.load),
             "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
-            "goal_conditioned_jepa_ppo": (args.training_dir / "goal_conditioned_jepa_ppo" / "best_policy.pt", GoalConditionedJEPAPPOPolicy.load),
+            "goal_conditioned_jepa_ppo": (args.training_dir / "goal_conditioned_jepa_ppo" / "best_policy.pt", lambda path: GoalConditionedJEPAPPOPolicy.load(path, args.training_dir / "behavior_cloning" / "policy.json")),
             "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
             "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_agentic_mpc_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
             "safe_ppo_agentic_sac": (args.training_dir / "safe_ppo_agentic_sac" / "best_safe_ppo_agentic_sac_policy.pt", SafePPOAgenticSACPolicy.load),
@@ -414,6 +414,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             else:
                 checkpoint_status[name] = "missing checkpoint"
                 missing_required.append(name)
+
         policies["sac_inspired"] = SACInspiredPolicy()
         policies["td3_inspired"] = TD3InspiredPolicy()
 
