@@ -37,7 +37,7 @@ POLICY_LABELS = {
     "q_learning": "Q-Learning",
     "dqn": "DQN",
     "ppo": "PPO",
-    "goal_conditioned_jepa_ppo": "Goal-Conditioned JEPA-PPO-TD3BC",
+    "goal_conditioned_jepa_ppo": "TD3BC-Guided JEPA-PPO SafeAgent",
     "safe_ppo_agentic_mpc": "PPO-SafeAgent-MPC",
     "safe_ppo_agentic_sac": "PPO-SafeAgent-SAC",
     "safe_ppo_agentic_td3": "PPO-SafeAgent-TD3",
@@ -389,7 +389,7 @@ def _build_policies(args: argparse.Namespace) -> tuple[dict[str, BasePolicy], li
             "q_learning": (args.training_dir / "q_learning" / "q_table.json", QLearningPolicy.load),
             "dqn": (args.training_dir / "dqn" / "best_policy.pt", DQNPolicy.load),
             "ppo": (args.training_dir / "ppo" / "best_policy.pt", PPOPolicy.load),
-            "goal_conditioned_jepa_ppo": (args.training_dir / "goal_conditioned_jepa_ppo" / "best_policy.pt", lambda path: GoalConditionedJEPAPPOPolicy.load(path, args.training_dir / "behavior_cloning" / "policy.json")),
+            "goal_conditioned_jepa_ppo": (args.training_dir / "goal_conditioned_jepa_ppo" / "best_policy.pt", lambda path: GoalConditionedJEPAPPOPolicy.load(path, args.training_dir / "behavior_cloning" / "policy.json", backbone_ppo_path=args.training_dir / "safe_ppo_agentic_td3_bc" / "best_safe_ppo_agentic_td3_bc_policy.pt", ppo_path=args.training_dir / "ppo" / "best_policy.pt")),
             "behavior_cloning": (args.training_dir / "behavior_cloning" / "policy.json", BehaviorCloningPolicy.load),
             "safe_ppo_agentic_mpc": (args.training_dir / "safe_ppo_agentic_mpc" / "best_safe_ppo_agentic_mpc_policy.pt", lambda path: SafePPOAgenticMPCPolicy.load(path, horizon=args.mpc_horizon)),
             "safe_ppo_agentic_sac": (args.training_dir / "safe_ppo_agentic_sac" / "best_safe_ppo_agentic_sac_policy.pt", SafePPOAgenticSACPolicy.load),
@@ -543,9 +543,13 @@ def main() -> None:
             f"Simulation horizon ({simulated_minutes:.1f} min) ends before tap window starts ({tap_window_start_min:.1f} min). "
             "Tap metrics and energy_per_ton/Pareto charts may be invalid."
         )
-    no_tap = summary_df[summary_df["tap_ready"] == False]["policy"].unique().tolist()  # noqa: E712
-    if no_tap:
-        warnings.append("No successful taps for: " + ", ".join(_display_name(p) for p in sorted(no_tap)))
+    tap_ready_by_policy = summary_df.groupby("policy")["tap_ready"].mean()
+    zero_tap_ready = tap_ready_by_policy[tap_ready_by_policy <= 0.0].index.tolist()
+    partial_tap_ready = tap_ready_by_policy[(tap_ready_by_policy > 0.0) & (tap_ready_by_policy < 0.5)].index.tolist()
+    if zero_tap_ready:
+        warnings.append("Zero tap-ready rate for: " + ", ".join(_display_name(p) for p in sorted(zero_tap_ready)))
+    if partial_tap_ready:
+        warnings.append("Low tap-ready rate (<50%) for: " + ", ".join(_display_name(p) for p in sorted(partial_tap_ready)))
 
     figures = _plot_all_figures(summary_df, output_dir, evaluated_policies)
     _render_html(output_dir, summary_df, policy_stats, scenario_rank, comparison_df, stat_tests, policy_coverage, figures, args.max_steps, dt_s, warnings)

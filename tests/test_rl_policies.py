@@ -51,4 +51,24 @@ def test_goal_conditioned_jepa_ppo_uses_td3bc_goal_setting():
     assert td3bc_goal_vec(obs).shape[0] == TD3BC_GOAL_VECTOR_DIM
     assert "td3bc_goal_action" in pol.last_info
     assert "td3bc_goal_embedding" in pol.last_info
-    assert "td3bc_goal_embedding" in pol.last_info["pipeline"]
+    assert "ppo_safeagent_td3bc_backbone_action" in pol.last_info
+    assert "jepa_residual_reason" in pol.last_info
+    assert "jepa_predictor" in pol.last_info["pipeline"]
+
+
+def test_jepa_residual_keeps_tap_ready_backbone_and_blocks_invalid_tap():
+    ctrl = EAFController(default_config(), enhanced_model=True)
+    obs = ctrl.reset()
+    obs.update({
+        "time_min": 58.0,
+        "bath_temp_c": 1590.0,
+        "melted_fraction": 0.94,
+        "liquid_steel_kg": 94000.0,
+        "can_tap": False,
+    })
+    pol = GoalConditionedJEPAPPOPolicy()
+    act = pol.act(obs)
+    assert REQUIRED.issubset(act.keys())
+    assert act["tap_command"] is False
+    assert act["power_mw"] >= 70.0
+    assert pol.last_info["jepa_residual_reason"] in {"jepa_late_tap_ready_recovery", "jepa_mass_protection"}

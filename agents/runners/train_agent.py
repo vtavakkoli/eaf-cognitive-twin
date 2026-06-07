@@ -24,6 +24,7 @@ from agents.policies.q_learning_policy import QLearningPolicy
 from agents.policies.rl_common import ACTION_NAMES, Discretizer, normalized_obs_vec, safe_discrete_action
 from agents.policies.safe_ppo_agentic_bc import SafePPOAgenticBCPolicy
 from agents.policies.safe_ppo_agentic_mpc import SafePPOAgenticMPCPolicy
+from agents.policies.safe_ppo_agentic_td3_bc import SafePPOAgenticTD3BCPolicy
 from agents.policies.trainable_policy import TrainablePolicy
 from agents.runners.episode_runner import run_episode
 
@@ -287,19 +288,45 @@ def train_goal_conditioned_jepa_ppo(
     epochs: int = 4,
     batch_size: int = 32,
 ) -> None:
-    """Train the proposed set-point-aware JEPA-PPO controller.
+    """Train the TD3BC-guided JEPA-augmented PPO-SafeAgent.
 
-    PPO optimizes the action policy, while the auxiliary JEPA module predicts the
-    next normalized furnace-state embedding from current state, previous action,
-    operation set-points, goal error, and phase embedding.
+    The JEPA controller is intentionally trained as a residual module on top of
+    PPO-SafeAgent-TD3BC instead of as an independent replacement. This prevents
+    the observed rank-9 failure mode where a weak JEPA/PPO head missed the
+    tap-ready state even though the TD3BC and BC policies were strong.
     """
-    bc_dir = output_dir.parent / "behavior_cloning"
+    parent = output_dir.parent
+    bc_dir = parent / "behavior_cloning"
     if not (bc_dir / "policy.json").exists():
         train_behavior_cloning(base_cfg, episodes, seed, bc_dir, max_steps)
     bc_policy = BehaviorCloningPolicy.load(bc_dir / "policy.json")
 
+    safe_dir = parent / "safe_ppo_agentic_td3_bc"
+    safe_ckpt = safe_dir / "best_safe_ppo_agentic_td3_bc_policy.pt"
+    if not safe_ckpt.exists():
+        train_safe_ppo_agentic_bc(
+            base_cfg,
+            episodes,
+            seed,
+            safe_dir,
+            max_steps,
+            learning_rate=learning_rate,
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+            clip_epsilon=clip_epsilon,
+            entropy_coef=entropy_coef,
+            value_coef=value_coef,
+            rollout_steps=rollout_steps,
+            epochs=epochs,
+            batch_size=batch_size,
+            hybrid_name="safe_ppo_agentic_td3_bc",
+        )
+
+    backbone_ppo = PPOPolicy.load(safe_ckpt) if safe_ckpt.exists() else PPOPolicy()
+    execution_policy = SafePPOAgenticTD3BCPolicy(ppo_policy=backbone_ppo, bc_policy=bc_policy)
     rng = np.random.default_rng(seed)
-    policy = GoalConditionedJEPAPPOPolicy(bc_policy=bc_policy)
+    policy = GoalConditionedJEPAPPOPolicy(bc_policy=bc_policy, execution_policy=execution_policy)
+
     best = -1e18
     logs = []
     reward_ma: deque[float] = deque(maxlen=20)
@@ -316,17 +343,25 @@ def train_goal_conditioned_jepa_ppo(
             x = policy.feature_vector(obs, prev_action)
             pred_in = predictor_input(obs, prev_action, bc_policy=bc_policy)
             z = policy.latent_state(obs)
-            logits = policy.actor_w @ x
-            p = _softmax(logits)
-            a = int(rng.choice(len(ACTION_NAMES), p=p))
-            old_logp = float(np.log(max(p[a], 1e-12)))
-            action = safe_discrete_action(ACTION_NAMES[a], obs)
+
+            # Follow the strong PPO-SafeAgent-TD3BC backbone and train JEPA as a
+            # residual/predictive module. The actor head is updated toward the
+            # executed safe action, but it no longer destabilizes execution.
+            probs = _softmax(policy.actor_w @ x)
+            action = policy.act(obs)
             res = ctrl.step(action)
             executed_action = dict(res.info["safe_action"])
             executed_idx = _action_index_from_action(obs, executed_action)
+            old_logp = float(np.log(max(probs[executed_idx], 1e-12)))
             next_z = policy.latent_state(res.observation)
             v = float(policy.value_w @ x)
-            traj.append((x, pred_in, z, next_z, executed_idx, old_logp, float(np.clip(res.reward, -5.0, 5.0)), float(res.done), v))
+            shaped_reward = float(res.reward)
+            if bool(res.observation.get("can_tap", False)) or (
+                float(res.observation.get("melted_fraction", 0.0)) >= 0.95
+                and float(res.observation.get("bath_temp_c", 0.0)) >= float(ctrl.config.steel_melt_temp_c)
+            ):
+                shaped_reward += 1.0
+            traj.append((x, pred_in, z, next_z, executed_idx, old_logp, float(np.clip(shaped_reward, -5.0, 5.0)), float(res.done), v))
             policy.remember_action(executed_action)
             obs = res.observation
             total += res.reward
@@ -341,8 +376,14 @@ def train_goal_conditioned_jepa_ppo(
             policy.predictor_w -= jepa_learning_rate * np.outer(err, pred_in)
             policy.predictor_w = np.clip(policy.predictor_w, -2.0, 2.0)
 
-        if total > best:
-            best = total
+        # Save by tap-ready-aware objective, not reward alone. This matches the
+        # report's multi-objective selection rule better than raw episode reward.
+        success = int(_episode_success(obs, ctrl.config))
+        liquid_ratio = float(obs.get("liquid_steel_kg", 0.0)) / max(float(ctrl.config.tap_target_steel_kg), 1e-9)
+        endpoint_temp_err = abs(float(obs.get("bath_temp_c", 0.0)) - float(ctrl.config.tap_target_temp_c))
+        selection_score = total + 350.0 * success + 80.0 * min(liquid_ratio, 1.0) - 1.5 * endpoint_temp_err
+        if selection_score > best:
+            best = selection_score
             output_dir.mkdir(parents=True, exist_ok=True)
             policy.save(output_dir / "best_policy.pt")
 
@@ -383,20 +424,22 @@ def train_goal_conditioned_jepa_ppo(
                     policy.actor_w = np.clip(policy.actor_w, -10.0, 10.0)
                     policy.value_w = np.clip(policy.value_w, -10.0, 10.0)
 
-        success = int(_episode_success(obs, ctrl.config))
         recent_success.append(success)
         reward_ma.append(total)
         logs.append({
             "episode": ep,
             "reward": total,
+            "selection_score": selection_score,
             "success": success,
             "tap_success_rate": success,
             "final_temperature_c": float(obs.get("bath_temp_c", 0.0)),
             "cum_tapped_kg": float(obs.get("cum_tapped_kg", 0.0)),
+            "liquid_steel_kg": float(obs.get("liquid_steel_kg", 0.0)),
             "energy_per_ton": (float(obs.get("cum_electric_mwh", 0.0)) * 1000.0 / max(1e-9, float(obs.get("cum_tapped_kg", 0.0)) / 1000.0)) if float(obs.get("cum_tapped_kg", 0.0)) > 0 else np.nan,
             "failure_reason": _failure_reason(obs),
             "moving_avg_reward": float(np.mean(reward_ma)),
             "jepa_prediction_loss": float(np.mean(jepa_losses)) if jepa_losses else np.nan,
+            "last_jepa_residual_reason": str(policy.last_info.get("jepa_residual_reason", "n/a")),
         })
         if _should_early_stop(recent_success):
             break
@@ -570,7 +613,7 @@ def main() -> None:
         "safe_ppo_agentic_bc": lambda: train_safe_ppo_agentic_bc(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_bc", args.max_steps, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size),
         "safe_ppo_agentic_td3_bc": lambda: train_safe_ppo_agentic_bc(base_cfg, episodes, args.seed, args.output_dir / "safe_ppo_agentic_td3_bc", args.max_steps, learning_rate=args.learning_rate, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_epsilon=args.clip_epsilon, entropy_coef=args.entropy_coef, value_coef=args.value_coef, rollout_steps=args.rollout_steps, epochs=args.epochs, batch_size=args.batch_size, hybrid_name="safe_ppo_agentic_td3_bc"),
     }
-    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","goal_conditioned_jepa_ppo","safe_ppo_agentic_mpc","safe_ppo_agentic_sac","safe_ppo_agentic_td3","safe_ppo_agentic_bc","safe_ppo_agentic_td3_bc"]
+    order=["trainable_adaptive_controller","behavior_cloning","q_learning","dqn","ppo","safe_ppo_agentic_mpc","safe_ppo_agentic_sac","safe_ppo_agentic_td3","safe_ppo_agentic_bc","safe_ppo_agentic_td3_bc","goal_conditioned_jepa_ppo"]
     if args.algorithm == "heuristic":
         train_map["trainable_adaptive_controller"](); trained=["trainable_adaptive_controller"]
     elif args.algorithm == "all":
