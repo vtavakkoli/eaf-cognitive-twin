@@ -4,10 +4,15 @@ Copyright (c) 2026 Vahid Tavakkoli, Kabeh Mohsenzadegan, and Kyandoghere Kyamaky
 All rights reserved.
 
 This repository is made publicly available for transparency, academic review,
-and reproducibility evaluation before formal publication of the associated paper:
+and reproducibility evaluation in connection with the associated research work:
 
-"Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking:
-A Multi-Policy Digital Twin Benchmark"
+"Evaluating Agentic AI in EAF Steelmaking:
+A Multi-Fidelity Digital Twin Benchmark"
+
+Accepted and presented at the International Workshop on AI and Mathematical
+Methods for Real-world Impact (AI2M4RI), in conjunction with the 23rd
+International Conference on Mobile Systems and Pervasive Computing (MobiSPC),
+Athens, Greece, August 18–20, 2026.
 
 Authors:
 Vahid Tavakkoli
@@ -40,13 +45,14 @@ tables, or results in another repository, paper, product, or project without
 prior written permission from the authors.
 
 If you use this repository, its methodology, results, code, or benchmark design
-for academic or research purposes, you must cite the associated paper. Before
-formal publication, cite this repository as:
+for academic or research purposes, you must cite the associated paper:
 
 Vahid Tavakkoli, Kabeh Mohsenzadegan, and Kyandoghere Kyamakya,
-"Safe Hybrid Agentic Control for Electric Arc Furnace Steelmaking:
-A Multi-Policy Digital Twin Benchmark", GitHub repository, 2026.
-Available at: https://github.com/vtavakkoli/eaf-cognitive-twin
+"Evaluating Agentic AI in EAF Steelmaking: A Multi-Fidelity Digital Twin
+Benchmark," International Workshop on AI and Mathematical Methods for
+Real-world Impact (AI2M4RI), in conjunction with the 23rd International
+Conference on Mobile Systems and Pervasive Computing (MobiSPC), Athens,
+Greece, August 18–20, 2026. Accepted and presented.
 
 After the associated paper is formally published, this repository may be
 relicensed under an open-source license such as MIT or Apache License 2.0.
