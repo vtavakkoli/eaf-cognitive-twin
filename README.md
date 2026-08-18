@@ -269,7 +269,7 @@ The digital-twin fidelity labels describe relative fidelity **within this reposi
 Tavakkoli, V., Mohsenzadegan, K., & Kyamakya, K. (2026). **Evaluating Agentic AI in EAF Steelmaking: A Multi-Fidelity Digital Twin Benchmark.** Accepted and presented at the International Workshop on AI and Mathematical Methods for Real-world Impact (AI2M4RI), in conjunction with the 23rd International Conference on Mobile Systems and Pervasive Computing (MobiSPC), Athens, Greece, August 18–20, 2026.
 
 ```bibtex
-@inproceedings{tavakkolli2026evaluating_agentic_eaf,
+@inproceedings{tavakkoli2026evaluating_agentic_eaf,
   author    = {Tavakkoli, Vahid and Mohsenzadegan, Kabeh and Kyamakya, Kyandoghere},
   title     = {Evaluating Agentic AI in EAF Steelmaking: A Multi-Fidelity Digital Twin Benchmark},
   booktitle = {International Workshop on AI and Mathematical Methods for Real-world Impact (AI2M4RI), in conjunction with the 23rd International Conference on Mobile Systems and Pervasive Computing (MobiSPC)},
