@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import os
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -80,13 +81,17 @@ class TestAgentController(unittest.TestCase):
 
     def test_safety_filter_clamps_overtemperature_action(self):
         ctrl = EAFController(default_config(), enhanced_model=True)
-        obs = ctrl.reset()
+        ctrl.reset()
         ctrl.state.steel_temp_k = (ctrl.config.max_temp_c + 10.0) + 273.15
         res = ctrl.step({"power_mw": 120, "oxygen_nm3_min": 120, "ng_nm3_min": 20, "carbon_kg_min": 10, "flux_kg_min": 10, "tap_command": False})
         self.assertEqual(float(res.info["safe_action"]["power_mw"]), 0.0)
 
 
 class TestAgentRunners(unittest.TestCase):
+    @staticmethod
+    def _env() -> dict[str, str]:
+        return {**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"}
+
     def test_train_and_run_create_outputs(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -95,7 +100,7 @@ class TestAgentRunners(unittest.TestCase):
             subprocess.run(
                 [sys.executable, "-m", "agents.runners.train_agent", "--config", "configs/base_case.json", "--output-dir", str(train_out), "--iterations", "2"],
                 check=True,
-                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+                env=self._env(),
             )
             subprocess.run(
                 [
@@ -106,8 +111,8 @@ class TestAgentRunners(unittest.TestCase):
                     "configs/base_case.json",
                     "--output-dir",
                     str(run_out),
-                    "--trained-policy",
-                    str(train_out / "checkpoints" / "best_policy.json"),
+                    "--training-dir",
+                    str(train_out),
                     "--seeds",
                     "2",
                     "--model",
@@ -116,21 +121,33 @@ class TestAgentRunners(unittest.TestCase):
                     "5",
                 ],
                 check=True,
-                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+                env=self._env(),
             )
             self.assertTrue((run_out / "scenario_summary.csv").exists())
             self.assertTrue((run_out / "statistical_analysis.csv").exists())
             self.assertTrue((run_out / "result.html").exists())
             summary = pd.read_csv(run_out / "scenario_summary.csv")
             self.assertTrue((summary["model_name"] == "Model_C_enhanced_hybrid").all())
+            self.assertIn("trainable_adaptive_controller", summary["policy"].unique().tolist())
 
     def test_downtime_enforced_for_all_policies(self):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td)
             subprocess.run(
-                [sys.executable, "-m", "agents.runners.run_agent", "--output-dir", str(out), "--seeds", "1", "--n-scenarios", "6"],
+                [
+                    sys.executable,
+                    "-m",
+                    "agents.runners.run_agent",
+                    "--output-dir",
+                    str(out),
+                    "--seeds",
+                    "1",
+                    "--n-scenarios",
+                    "6",
+                    "--allow-missing-rl-baselines",
+                ],
                 check=True,
-                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+                env=self._env(),
             )
             for p in ["baseline_schedule", "rule_based", "mpc"]:
                 ts = pd.read_csv(out / "timeseries" / f"agent_timeseries_delayed_melting_downtime_{p}_seed0.csv")
@@ -158,17 +175,48 @@ class TestAgentRunners(unittest.TestCase):
 
         self.assertEqual(_canonical_policy_key("agentic_ai"), "trainable_adaptive_controller")
 
+    def test_missing_checkpoint_contract_is_explicit(self):
+        from agents.runners.run_agent import _build_policies
+
+        with tempfile.TemporaryDirectory() as td:
+            strict_args = SimpleNamespace(
+                mpc_horizon=3,
+                training_dir=Path(td),
+                include_rl_baselines=False,
+                allow_missing_rl_baselines=False,
+            )
+            with self.assertRaisesRegex(ValueError, "Missing required policy implementations/checkpoints"):
+                _build_policies(strict_args)
+
+            permissive_args = SimpleNamespace(
+                mpc_horizon=3,
+                training_dir=Path(td),
+                include_rl_baselines=False,
+                allow_missing_rl_baselines=True,
+            )
+            policies, missing, checkpoint_status, _ = _build_policies(permissive_args)
+            self.assertEqual(set(policies), {"baseline_schedule", "rule_based", "mpc"})
+            self.assertEqual(missing, ["trainable_adaptive_controller"])
+            self.assertEqual(checkpoint_status["trainable_adaptive_controller"], "missing checkpoint")
+
     def test_result_html_created(self):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td)
             subprocess.run(
-                [sys.executable, "-m", "agents.runners.run_agent", "--output-dir", str(out), "--seeds", "1"],
+                [
+                    sys.executable,
+                    "-m",
+                    "agents.runners.run_agent",
+                    "--output-dir",
+                    str(out),
+                    "--seeds",
+                    "1",
+                    "--allow-missing-rl-baselines",
+                ],
                 check=True,
-                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+                env=self._env(),
             )
             self.assertTrue((out / "result.html").exists())
-
-
 
     def test_run_episode_max_steps_610(self):
         from agents.runners.episode_runner import run_episode
@@ -181,12 +229,21 @@ class TestAgentRunners(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td)
             subprocess.run(
-                [sys.executable, "-m", "agents.runners.run_agent", "--output-dir", str(out), "--seeds", "1"],
+                [
+                    sys.executable,
+                    "-m",
+                    "agents.runners.run_agent",
+                    "--output-dir",
+                    str(out),
+                    "--seeds",
+                    "1",
+                    "--allow-missing-rl-baselines",
+                ],
                 check=True,
-                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+                env=self._env(),
             )
             summary = pd.read_csv(out / "scenario_summary.csv")
-            for col in ["tap_success", "cum_tapped_kg", "max_bath_temp_c", "cum_electric_mwh", "model_name", "seed", "terminal_reward"]:
+            for col in ["tap_ready", "cum_tapped_kg", "max_bath_temp_c", "cum_electric_mwh", "model_name", "seed", "terminal_reward"]:
                 self.assertIn(col, summary.columns)
 
     def test_agentic_ai_alias_and_report_coverage(self):
@@ -209,35 +266,43 @@ class TestAgentRunners(unittest.TestCase):
                     "--allow-missing-rl-baselines",
                 ],
                 check=True,
-                env={**os.environ, "PYTHONPATH": f"{Path.cwd()}:{Path.cwd() / 'src'}"},
+                env=self._env(),
             )
             summary = pd.read_csv(out / "scenario_summary.csv")
             html = (out / "result.html").read_text()
-            self.assertNotIn("agentic_ai", html)
-            self.assertIn("Q-Learning", html)
-            self.assertIn("DQN", html)
-            self.assertIn("PPO", html)
-            self.assertIn("PPO-SafeAgent-MPC", html)
-            expected_rl = [
-                "ppo",
+            evaluated = set(summary["policy"].unique().tolist())
+            expected_evaluated = {"baseline_schedule", "rule_based", "mpc", "sac_inspired", "td3_inspired"}
+            expected_missing = {
+                "trainable_adaptive_controller",
                 "q_learning",
                 "dqn",
+                "ppo",
+                "goal_conditioned_jepa_ppo",
                 "behavior_cloning",
-                "sac_inspired",
-                "td3_inspired",
                 "safe_ppo_agentic_mpc",
-            ]
-            for policy in expected_rl:
-                self.assertIn(policy, summary["policy"].unique().tolist())
+                "safe_ppo_agentic_sac",
+                "safe_ppo_agentic_td3",
+                "safe_ppo_agentic_bc",
+                "safe_ppo_agentic_td3_bc",
+            }
+
+            self.assertNotIn("agentic_ai", html)
+            self.assertEqual(evaluated, expected_evaluated)
+            self.assertIn("SAC Heuristic", html)
+            self.assertIn("TD3 Heuristic", html)
+            self.assertIn("Missing required policies/checkpoints (allowed)", html)
+            for policy in expected_missing:
+                self.assertNotIn(policy, evaluated)
+                self.assertIn(policy, html)
+
             cov = pd.read_csv(out / "policy_coverage.csv")
             self.assertTrue((out / "policy_coverage.csv").exists())
-            self.assertTrue(set(summary["policy"].unique()).issubset(set(cov["policy"].unique())))
+            self.assertEqual(set(cov["policy"].unique().tolist()), expected_evaluated)
+
             manifest = json.loads((out / "run_manifest.json").read_text())
             self.assertIn("evaluated_policies", manifest)
+            self.assertEqual(set(manifest["evaluated_policies"]), expected_evaluated)
             self.assertEqual(sorted(manifest["evaluated_policies"]), sorted(summary["policy"].unique().tolist()))
-            for policy in expected_rl:
-                self.assertIn(policy, manifest["evaluated_policies"])
-                self.assertIn(policy, cov["policy"].unique().tolist())
 
 
 if __name__ == "__main__":
