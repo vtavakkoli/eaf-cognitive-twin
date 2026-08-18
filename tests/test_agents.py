@@ -243,7 +243,7 @@ class TestAgentRunners(unittest.TestCase):
                 env=self._env(),
             )
             summary = pd.read_csv(out / "scenario_summary.csv")
-            for col in ["tap_success", "cum_tapped_kg", "max_bath_temp_c", "cum_electric_mwh", "model_name", "seed", "terminal_reward"]:
+            for col in ["tap_ready", "cum_tapped_kg", "max_bath_temp_c", "cum_electric_mwh", "model_name", "seed", "terminal_reward"]:
                 self.assertIn(col, summary.columns)
 
     def test_agentic_ai_alias_and_report_coverage(self):
